@@ -231,6 +231,16 @@ class LisaOverfitTest:
             logger.error(f"LoRA適用エラー: {e}")
             raise
     
+    def _get_llama_processor(self, model):
+        """LoRA適用後のモデルからllama_processorを取得"""
+        if hasattr(model, 'base_model'):
+            if hasattr(model.base_model, 'model'):
+                return model.base_model.model.llama_processor
+            else:
+                return model.base_model.llama_processor
+        else:
+            return model.llama_processor
+    
     def verify_device_map_after_lora(self, model):
         """LoRA適用後のdevice_map確認（LISA統合モデル対応）"""
         logger.info("=== LoRA適用後device_map確認 ===")
@@ -260,50 +270,112 @@ class LisaOverfitTest:
             return False
     
     def prepare_fixed_data(self, model) -> Dict[str, Any]:
-        """固定データ準備（公式推奨方法）"""
-        logger.info("=== 固定データ準備 ===")
+        """固定データ準備（シングルエンコーダー構成・HybridDataset準拠）"""
+        logger.info("=== 固定データ準備（シングルエンコーダー構成） ===")
         
         try:
-            # テスト画像作成
-            test_image = Image.new('RGB', (224, 224), color='red')
-            test_prompt = "この画像で赤い領域を[SEG]してください。"
+            # データセット関連インポート
+            from utils.dataset import preprocess_sam_image, build_correct_labels_for_llama4
             
-            # 公式推奨方法：メッセージ形式で準備（勾配フロー検証で成功した方法）
+            # テスト画像作成
+            test_image = Image.new('RGB', (336, 336), color='red')
+            test_prompt = "Please segment the red region in this image."
+            
+            # 1. SAM用画像処理
+            sam_image_size = config_linux.SAM_IMAGE_SIZE  # 1024
+            sam_pixel_values = preprocess_sam_image(test_image, sam_image_size)
+            if sam_pixel_values.dim() == 4:
+                sam_pixel_values = sam_pixel_values.squeeze(0)
+            logger.info(f"SAM画像入力生成: shape={sam_pixel_values.shape}")
+            
+            # 2. Llama-4ネイティブフォーマットでテキスト処理
+            # プロンプトのクリーンアップ
+            clean_prompt = test_prompt.strip()
+            if "[SEG]" in clean_prompt and not clean_prompt.endswith("."):
+                clean_prompt = clean_prompt.replace("[SEG]", "[SEG].")
+            
+            # メッセージフォーマット
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": test_image},
-                        {"type": "text", "text": test_prompt}
+                        {"type": "image"},  # 画像プレースホルダー
+                        {"type": "text", "text": clean_prompt}
                     ]
                 }
             ]
             
-            # Llama4 Processorで直接処理（成功した方法）
-            inputs = model.llama_processor.apply_chat_template(
+            # apply_chat_templateでLlama-4形式のテキストを生成
+            llama_processor = self._get_llama_processor(model)
+            formatted_prompt = llama_processor.apply_chat_template(
                 messages,
                 add_generation_prompt=True,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt"
+                tokenize=False  # テキストとして取得
             )
             
-            # BatchFeatureを辞書に変換（勾配フロー検証で成功した方法）
-            if hasattr(inputs, 'keys') and hasattr(inputs, '__getitem__'):
-                result_dict = {}
-                for key in inputs.keys():
-                    result_dict[key] = inputs[key]
-                inputs = result_dict
-                logger.info(f"✅ BatchFeature→dict変換完了: {list(inputs.keys())}")
+            # アシスタント応答を追加（HybridDataset形式）
+            if "segment" in clean_prompt.lower():
+                formatted_prompt += " Sure, [SEG].</s>"
+            else:
+                formatted_prompt += " This is a red image.</s>"
+            
+            logger.info(f"フォーマット済みプロンプト（最初の100文字）: {formatted_prompt[:100]}...")
+            
+            # 3. テキストのみをトークン化
+            text_inputs = llama_processor.tokenizer(
+                formatted_prompt,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=config_linux.MODEL_MAX_LENGTH
+            )
+            
+            input_ids = text_inputs['input_ids'].squeeze(0)
+            attention_mask = text_inputs['attention_mask'].squeeze(0)
+            
+            # 4. ラベルを正しく構築
+            labels = build_correct_labels_for_llama4(input_ids, llama_processor.tokenizer)
+            
+            # 5. [SEG]トークンマスクの作成
+            seg_token = config_linux.SEG_TOKEN
+            seg_token_idx = llama_processor.tokenizer.convert_tokens_to_ids(seg_token)
+            seg_token_mask = (input_ids == seg_token_idx)
+            
+            # 6. ダミーのグラウンドトゥルースマスク
+            ground_truth_mask = torch.zeros((1, test_image.size[1], test_image.size[0]), dtype=torch.float32)
+            if "segment" in clean_prompt.lower():
+                # セグメンテーションタスクの場合、ダミーマスクを生成
+                ground_truth_mask[0, :test_image.size[1]//2, :test_image.size[0]//2] = 1.0
+            
+            # 7. 入力データの準備（HybridDataset互換形式）
+            inputs = {
+                'input_ids': input_ids.unsqueeze(0),  # batch次元を追加
+                'attention_mask': attention_mask.unsqueeze(0),
+                'sam_pixel_values': sam_pixel_values.unsqueeze(0),
+                'labels': labels.unsqueeze(0),
+                'seg_token_mask': seg_token_mask.unsqueeze(0),
+                'ground_truth_masks': ground_truth_mask.unsqueeze(0),
+                'original_sizes': [(test_image.size[1], test_image.size[0])],
+                'has_mask': torch.tensor([1 if "segment" in clean_prompt.lower() else 0])
+            }
             
             self.fixed_data = {
                 "inputs": inputs,
                 "test_image": test_image,
-                "test_prompt": test_prompt
+                "test_prompt": test_prompt,
+                "formatted_prompt": formatted_prompt
             }
             
-            logger.info(f"✓ 固定データ準備完了")
+            logger.info(f"✓ 固定データ準備完了（シングルエンコーダー構成）")
             logger.info(f"  - 入力形状: {[(k, v.shape if hasattr(v, 'shape') else type(v)) for k, v in inputs.items()]}")
+            logger.info(f"  - SAM画像入力: {inputs['sam_pixel_values'].shape}")
+            logger.info(f"  - pixel_values: {'None' if 'pixel_values' not in inputs else inputs['pixel_values'].shape}")
+            
+            # <|image|>トークンの確認
+            if '<|image|>' in formatted_prompt:
+                logger.info("✅ Llama-4ネイティブ<|image|>トークン検出")
+            else:
+                logger.warning("⚠️ <|image|>トークンが見つかりません")
             
             return self.fixed_data
             
@@ -331,10 +403,13 @@ class LisaOverfitTest:
         
         return optimizer
     
-    def run_training_epoch(self, model, optimizer, epoch: int) -> float:
+    def run_training_epoch(self, model, optimizer, epoch: int) -> Tuple[float, Dict[str, float]]:
         """単一エポックの学習実行（勾配フロー検証で成功した方法）"""
         model.train()
         optimizer.zero_grad()
+        
+        # 損失の詳細を保存
+        loss_details = {}
         
         # 固定データを適切なデバイスに移動（Web調査：フォールバック処理を削除）
         inputs = self.fixed_data["inputs"]
@@ -361,18 +436,32 @@ class LisaOverfitTest:
         first_device = next(iter(device_map.values()))
         inputs = {k: v.to(first_device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         
-        # 実際のLISA統合モデル使用：完全なフォワードパス（SAM機能付き）
-        # verify_llama4_lisa_gradients.pyで成功した実装と同じ方法
+        # 実際のLISA統合モデル使用：完全なフォワードパス（シングルエンコーダー構成）
         model_outputs = model(
             input_ids=inputs['input_ids'],
             attention_mask=inputs.get('attention_mask'),
-            pixel_values=inputs.get('pixel_values'),
-            labels=inputs['input_ids'],  # 言語モデリング用
+            # pixel_values=inputs.get('pixel_values'),  # シングルエンコーダーでは削除
+            sam_pixel_values=inputs.get('sam_pixel_values'),  # SAM画像入力
+            labels=inputs['labels'],  # 正しくマスクされたラベル
+            ground_truth_masks=inputs.get('ground_truth_masks'),
+            seg_token_mask=inputs.get('seg_token_mask'),
+            original_sizes=inputs.get('original_sizes'),
             generate_mask=True  # SAM機能を有効化
         )
         
         # CompositeLoss統合による損失取得
         if isinstance(model_outputs, dict):
+            # 損失の詳細表示
+            if 'losses' in model_outputs and isinstance(model_outputs['losses'], dict):
+                logger.info(f"📊 エポック{epoch} - 損失の詳細:")
+                for loss_name, loss_value in model_outputs['losses'].items():
+                    if loss_value is not None:
+                        loss_details[loss_name] = loss_value.item()
+                        logger.info(f"  - {loss_name}: {loss_value.item():.6f}")
+                    else:
+                        loss_details[loss_name] = None
+                        logger.info(f"  - {loss_name}: N/A")
+            
             # CompositeLossからの統一損失
             if 'text_loss' in model_outputs:
                 loss = model_outputs['text_loss']
@@ -412,17 +501,22 @@ class LisaOverfitTest:
         # 損失値取得
         loss_value = loss.item()
         
-        # ログ記録
+        # 言語モデリング損失を取得（過学習判定用）
+        lm_loss_value = loss_details.get('lm_loss', loss_value)
+        
+        # ログ記録（損失の詳細も保存）
         log_entry = {
             "epoch": epoch,
             "loss": loss_value,
+            "lm_loss": lm_loss_value,
+            "loss_details": loss_details,
             "learning_rate": self.config.learning_rate
         }
         
         self.results["training_logs"].append(log_entry)
-        self.results["loss_history"].append(loss_value)
+        self.results["loss_history"].append(lm_loss_value)  # lm_lossを記録
         
-        return loss_value
+        return lm_loss_value, loss_details
     
     def run_overfit_test(self, model) -> Dict[str, Any]:
         """過学習テスト実行（成功した単独モデルと同じロジック）"""
@@ -436,24 +530,22 @@ class LisaOverfitTest:
         final_loss = None
         
         for epoch in range(self.config.num_epochs):
-            loss = self.run_training_epoch(model, optimizer, epoch + 1)
+            lm_loss, loss_details = self.run_training_epoch(model, optimizer, epoch + 1)
             
             if epoch == 0:
-                initial_loss = loss
-            final_loss = loss
+                initial_loss = lm_loss
+            final_loss = lm_loss
             
-            logger.info(f"エポック {epoch + 1}/{self.config.num_epochs}: 損失 = {loss:.6f}")
-            
-            # 早期停止判定
-            if loss < self.config.target_loss:
-                logger.info(f"✓ 目標損失{self.config.target_loss}を達成！エポック{epoch + 1}で早期停止")
+            # 早期停止判定（lm_lossで判定）
+            if lm_loss < self.config.target_loss:
+                logger.info(f"✓ 目標言語モデリング損失{self.config.target_loss}を達成！エポック{epoch + 1}で早期停止")
                 break
             
             # メモリクリーンアップ
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
             gc.collect()
         
-        # 過学習成功判定
+        # 過学習成功判定（lm_lossベース）
         loss_reduction = initial_loss - final_loss if initial_loss else 0
         loss_reduction_ratio = loss_reduction / initial_loss if initial_loss else 0
         
@@ -463,10 +555,10 @@ class LisaOverfitTest:
         )
         
         success_metrics = {
-            "initial_loss": initial_loss,
-            "final_loss": final_loss,
-            "loss_reduction": loss_reduction,
-            "loss_reduction_ratio": loss_reduction_ratio,
+            "initial_lm_loss": initial_loss,
+            "final_lm_loss": final_loss,
+            "lm_loss_reduction": loss_reduction,
+            "lm_loss_reduction_ratio": loss_reduction_ratio,
             "target_loss_achieved": final_loss < self.config.target_loss,
             "significant_improvement": loss_reduction_ratio > 0.5,
             "overfit_success": overfit_success
@@ -475,10 +567,10 @@ class LisaOverfitTest:
         self.results["success_metrics"] = success_metrics
         
         logger.info("=== LISA統合モデル過学習テスト完了 ===")
-        logger.info(f"  - 初期損失: {initial_loss:.6f}")
-        logger.info(f"  - 最終損失: {final_loss:.6f}")
+        logger.info(f"  - 初期言語モデリング損失: {initial_loss:.6f}")
+        logger.info(f"  - 最終言語モデリング損失: {final_loss:.6f}")
         logger.info(f"  - 損失減少: {loss_reduction:.6f} ({loss_reduction_ratio:.1%})")
-        logger.info(f"  - 過学習成功: {'✓' if overfit_success else '✗'}")
+        logger.info(f"  - 過学習成功（lm_lossベース）: {'✓' if overfit_success else '✗'}")
         
         return success_metrics
     
@@ -491,15 +583,15 @@ class LisaOverfitTest:
             plt.figure(figsize=(10, 6))
             plt.plot(range(1, len(self.results["loss_history"]) + 1), 
                     self.results["loss_history"], 
-                    'b-', linewidth=2, label='Training Loss')
+                    'b-', linewidth=2, label='Language Modeling Loss')
             
             # 目標損失線
             plt.axhline(y=self.config.target_loss, color='r', linestyle='--', 
                        label=f'Target Loss ({self.config.target_loss})')
             
             plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.title('LISA-Llama4統合モデル Overfit Test: Loss Curve')
+            plt.ylabel('Language Modeling Loss')
+            plt.title('LISA-Llama4統合モデル Overfit Test: LM Loss Curve')
             plt.legend()
             plt.grid(True, alpha=0.3)
             
