@@ -38,8 +38,7 @@ sys.path.insert(0, '.')
 # Import LISA components
 from model.llama4_lisa import LisaLlama4ForCausalLM, LisaLlama4Config
 import config_linux
-from utils.data_processing import preprocess_sam_image
-from utils.dataset import build_correct_labels_for_llama4
+from utils.dataset import preprocess_sam_image, build_correct_labels_for_llama4
 
 def print_header(title: str):
     """Print formatted header"""
@@ -47,15 +46,18 @@ def print_header(title: str):
     logger.info(f"  {title}")
     logger.info("=" * 80)
 
-def create_test_data() -> Tuple[Image.Image, str]:
-    """Create test image and text data"""
-    # Simple test image
-    test_image = Image.new('RGB', (224, 224), color='red')
+def create_test_data() -> Tuple[Image.Image, str, str]:
+    """Create test image and text data with dataset context"""
+    # Simple test image (Lambda Cloud標準サイズ)
+    test_image = Image.new('RGB', (336, 336), color='red')
     
-    # Test prompt for segmentation
-    test_prompt = "この画像で赤い領域を[SEG]してください。"
+    # Test prompt for segmentation (HybridDataset形式に準拠)
+    test_prompt = "Please segment the red region in this image."
     
-    return test_image, test_prompt
+    # Dataset name for context
+    dataset_name = "test_dataset"
+    
+    return test_image, test_prompt, dataset_name
 
 def analyze_gradients(model: nn.Module) -> Dict[str, Any]:
     """Analyze gradient information"""
@@ -132,7 +134,11 @@ def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], v
             input_ids=inputs['input_ids'],
             attention_mask=inputs.get('attention_mask'),
             # pixel_values=inputs.get('pixel_values'),  # シングルエンコーダーでは削除
-            labels=inputs['input_ids'],  # 言語モデリング用
+            sam_pixel_values=inputs.get('sam_pixel_values'),  # SAM画像入力を追加
+            labels=inputs['labels'],  # 正しくマスクされたラベルを使用
+            ground_truth_masks=inputs.get('ground_truth_masks'),  # GT���スク
+            seg_token_mask=inputs.get('seg_token_mask'),  # SEGトークン位置
+            original_sizes=inputs.get('original_sizes'),  # 元画像サイズ
             generate_mask=True  # SAM機能を有効化
         )
         
@@ -265,43 +271,65 @@ def main():
         # Step 3: Create test data
         print_header("ステップ3: テストデータ作成")
         
-        test_image, test_prompt = create_test_data()
+        test_image, test_prompt, dataset_name = create_test_data()
         logger.info(f"テスト画像: {test_image.size}")
         logger.info(f"テストプロンプト: {test_prompt}")
+        logger.info(f"データセット名: {dataset_name}")
         
-        # シングルエンコーダー構成用：学習時は直接データを準備
-        # HybridDatasetの実装を参考にして正しい入力データを作成
-        logger.info("シングルエンコーダー構成で学習用データ準備中...")
+        # シングルエンコーダー構成用：HybridDatasetの実装に完全準拠
+        logger.info("シングルエンコーダー構成で学習用データ準備中（HybridDataset準拠）...")
         
-        # 1. SAM用画像処理
+        # 1. SAM用画像処理（HybridDatasetと同じ処理）
         sam_image_size = config_linux.SAM_IMAGE_SIZE  # 1024
         sam_pixel_values = preprocess_sam_image(test_image, sam_image_size)
         if sam_pixel_values.dim() == 4:
             sam_pixel_values = sam_pixel_values.squeeze(0)
         logger.info(f"SAM画像入力生成: shape={sam_pixel_values.shape}")
         
-        # 2. Llama-4ネイティブフォーマットでテキスト処理
+        # 2. Llama-4ネイティブフォーマットでテキスト処理（HybridDataset準拠）
+        # プロンプトのクリーンアップ（HybridDatasetと同じ）
+        clean_prompt = test_prompt.strip()
+        if "[SEG]" in clean_prompt and not clean_prompt.endswith("."):
+            clean_prompt = clean_prompt.replace("[SEG]", "[SEG].")
+        
+        # メッセージフォーマット（HybridDataset形式）
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "image"},  # 画像プレースホルダー
-                    {"type": "text", "text": test_prompt}
+                    {"type": "text", "text": clean_prompt}
                 ]
             }
         ]
         
         # apply_chat_templateでLlama-4形式のテキストを生成
         # これにより<|image|>トークンが自動的に挿入される
-        chat_text = model.llama_processor.apply_chat_template(
+        # LoRA適用後のモデルでは基底モデルから取得
+        if hasattr(model, 'base_model'):
+            llama_processor = model.base_model.model.llama_processor if hasattr(model.base_model, 'model') else model.base_model.llama_processor
+        else:
+            llama_processor = model.llama_processor
+            
+        formatted_prompt = llama_processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False  # テキストとして取得
         )
         
+        # アシスタント応答を追加（HybridDataset形式）
+        if "[SEG]" in clean_prompt:
+            # セグメンテーションタスクの場合
+            formatted_prompt += " Sure, [SEG].</s>"
+        else:
+            # 通常のVQAタスクの場合（テスト用のダミー応答）
+            formatted_prompt += " This is a test response.</s>"
+        
+        logger.info(f"フォーマット済みプロンプト（最初の100文字）: {formatted_prompt[:100]}...")
+        
         # 3. テキストのみをトークン化（画像処理はSAMが行う）
-        text_inputs = model.llama_processor.tokenizer(
-            chat_text,
+        text_inputs = llama_processor.tokenizer(
+            formatted_prompt,
             return_tensors="pt",
             padding=False,
             truncation=True,
@@ -311,30 +339,61 @@ def main():
         input_ids = text_inputs['input_ids'].squeeze(0)
         attention_mask = text_inputs['attention_mask'].squeeze(0)
         
-        # 4. ラベルを正しく構築
-        labels = build_correct_labels_for_llama4(input_ids, model.llama_processor.tokenizer)
+        # 4. ラベルを正しく構築（HybridDataset準拠）
+        labels = build_correct_labels_for_llama4(input_ids, llama_processor.tokenizer)
         
         # 5. [SEG]トークンマスクの作成
-        seg_token_idx = model.seg_token_idx
+        # config_linux.SEG_TOKENを使用して直接トークンIDを取得
+        seg_token = config_linux.SEG_TOKEN  # "[SEG]"
+        seg_token_idx = llama_processor.tokenizer.convert_tokens_to_ids(seg_token)
+        logger.info(f"[SEG]トークンID: {seg_token_idx}")
+        
         seg_token_mask = (input_ids == seg_token_idx)
         
-        # 6. 入力データの準備
+        # 6. ダミーのグラウンドトゥルースマスク（テスト用）
+        ground_truth_mask = torch.zeros((1, test_image.size[1], test_image.size[0]), dtype=torch.float32)
+        if "[SEG]" in clean_prompt:
+            # セグメンテーションタスクの場合、ダミーマスクを生成
+            ground_truth_mask[0, :test_image.size[1]//2, :test_image.size[0]//2] = 1.0
+        
+        # 7. 入力データの準備（HybridDataset互換形式）
         inputs = {
             'input_ids': input_ids.unsqueeze(0),  # batch次元を追加
             'attention_mask': attention_mask.unsqueeze(0),
             'sam_pixel_values': sam_pixel_values.unsqueeze(0),
             'labels': labels.unsqueeze(0),
-            'seg_token_mask': seg_token_mask.unsqueeze(0)
+            'seg_token_mask': seg_token_mask.unsqueeze(0),
+            'ground_truth_masks': ground_truth_mask.unsqueeze(0),  # batch次元を追加
+            'original_sizes': [(test_image.size[1], test_image.size[0])],  # (H, W)形式
+            'has_mask': torch.tensor([1 if "[SEG]" in clean_prompt else 0]),
+            'dataset_name': dataset_name
         }
         
-        logger.info(f"✅ 学習用データ準備完了: {list(inputs.keys())}")
+        logger.info(f"✅ 学習用データ準備完了（HybridDataset互換）: {list(inputs.keys())}")
         
-        # SAM画像入力の確認
+        # データ構造の検証（verify_dataset_integrityと同じチェック）
         if 'sam_pixel_values' in inputs:
             logger.info(f"✅ SAM画像入力: shape={inputs['sam_pixel_values'].shape}")
+        else:
+            logger.error("❌ SAM画像入力が存在しません")
         
         if 'pixel_values' in inputs:
             logger.warning("⚠️ pixel_valuesが存在します（シングルエンコーダーでは不要）")
+        else:
+            logger.info("✅ pixel_valuesなし（シングルエンコーダー構成）")
+        
+        # <|image|>トークンの確認
+        if '<|image|>' in formatted_prompt:
+            logger.info("✅ Llama-4ネイティブ<|image|>トークン検出")
+        else:
+            logger.warning("⚠️ <|image|>トークンが見つかりません")
+        
+        # [SEG]トークンの確認
+        if seg_token_mask.any():
+            seg_positions = torch.nonzero(seg_token_mask).squeeze().tolist()
+            logger.info(f"✅ [SEG]トークン位置: {seg_positions}")
+        else:
+            logger.info("ℹ️ [SEG]トークンなし（VQAタスクなど）")
         
         # GPU移動
         first_device = next(iter(model.hf_device_map.values())) if hasattr(model, 'hf_device_map') else next(model.parameters()).device
