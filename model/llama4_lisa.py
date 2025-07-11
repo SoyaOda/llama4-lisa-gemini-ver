@@ -110,23 +110,38 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                 )
                 print("4bit量子化設定を適用（Vision層とMoEルーター最適化）")
         
-        # 4. Llama4モデル初期化（成功した単独モデルと同じ設定）
+        # 4. Llama4モデル初期化（高速ロード最適化版）
         print("Llama4モデル初期化開始...")
+        
+        # 高速ロード設定を確認
+        model_path = config.llama_model_id
+        if hasattr(config, 'use_safetensors') and config.use_safetensors:
+            safetensors_path = getattr(config, 'safetensors_model_path', None)
+            if safetensors_path and os.path.exists(safetensors_path):
+                print(f"✨ safetensors形式を使用: {safetensors_path}")
+                model_path = safetensors_path
+            else:
+                print("⚠️ safetensors形式が見つかりません。通常形式を使用します。")
+        
         try:
-            
             init_kwargs = {
                 "quantization_config": quantization_config,
                 "torch_dtype": torch_dtype,
                 "attn_implementation": config.attn_implementation,  # eager設定を使用
                 "trust_remote_code": True,
-                "low_cpu_mem_usage": True
+                "low_cpu_mem_usage": getattr(config, 'low_cpu_mem_usage', True),  # メモリ最適化
+                "use_safetensors": True  # safetensorsを優先的に使用
             }
+            
+            # ロード開始時刻を記録
+            import time
+            load_start = time.time()
             
             # DeepSpeed環境では device_map を設定しない
             if not is_deepspeed_env:
                 init_kwargs["device_map"] = getattr(config, 'device_map', 'auto')
                 self.llama_model = Llama4ForConditionalGeneration.from_pretrained(
-                    config.llama_model_id,
+                    model_path,
                     **init_kwargs
                 )
             else:
@@ -147,7 +162,10 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                     **init_kwargs
                 )
                 print("✅ DeepSpeed ZeRO-3互換モデル初期化完了")
-            print("✅ Llama-4モデルの初期化完了")
+            
+            # ロード時間を表示
+            load_time = time.time() - load_start
+            print(f"✅ Llama-4モデルの初期化完了（{load_time:.1f}秒）")
             print(f"  - パラメータ数: {sum(p.numel() for p in self.llama_model.parameters()):,}")
             if hasattr(self.llama_model, 'hf_device_map'):
                 print(f"  - デバイス分散: {self.llama_model.hf_device_map}")
@@ -286,20 +304,19 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                 self.llama_model.resize_token_embeddings(current_vocab_size)
                 print(f"✅ 埋め込み層を{current_vocab_size}次元にリサイズしました")
                 
-                # SEGトークンの最適化された初期化
+                # SEGトークンの初期化 - HuggingFace公式推奨方法（2025年最新）
                 if self.seg_token_id >= embed_size:  # 新しく追加されたトークン
-                    print(f"🔬 SEGトークン({self.seg_token_id})の最適化初期化を実行...")
-                    optimized_embedding = self._initialize_seg_token_embedding_optimized(
-                        tokenizer=tokenizer,
-                        seg_token_id=self.seg_token_id
+                    print(f"🔬 SEGトークン({self.seg_token_id})の初期化を実行...")
+                    
+                    # HuggingFace公式推奨: mean_resizing=Trueでresize_token_embeddings呼び出し
+                    # これにより既存埋め込みの平均と共分散を使用した初期化が自動的に行われる
+                    self.llama_model.resize_token_embeddings(
+                        current_vocab_size,
+                        pad_to_multiple_of=128,  # ハードウェア最適化（Tensor Cores）
+                        mean_resizing=True       # 既存埋め込みの統計を使用した初期化
                     )
                     
-                    # 埋め込み層への適用
-                    with torch.no_grad():
-                        embeddings = self.llama_model.get_input_embeddings()
-                        embeddings.weight[self.seg_token_id].copy_(optimized_embedding)
-                    
-                    print(f"✅ SEGトークン埋め込み最適化完了")
+                    print(f"✅ SEGトークン埋め込み初期化完了（公式方法使用）")
                     
             except RuntimeError as e:
                 if "DTensor" in str(e):
@@ -656,13 +673,19 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
         Returns:
             tuple: デバイス・データ型変換後のテンソル群
         """
+        # SAMモデルのデバイスを取得
+        if self.sam_model is not None:
+            sam_device = next(self.sam_model.parameters()).device
+        else:
+            sam_device = self._get_model_device()
+        
         # SAMはFloat32が必要
         converted = []
         for tensor in tensors:
             if tensor is not None:
-                # BFloat16 → Float32 変換 + GPU移動
+                # BFloat16 → Float32 変換 + SAMデバイスに移動
                 converted_tensor = self._move_to_device(
-                    tensor, dtype=torch.float32, description=f"{description}変換"
+                    tensor, device=sam_device, dtype=torch.float32, description=f"{description}変換"
                 )
                 converted.append(converted_tensor)
             else:
@@ -908,30 +931,28 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        pixel_values: Optional[torch.FloatTensor] = None,
+        sam_pixel_values: Optional[torch.FloatTensor] = None,  # SAM用画像 (B,3,1024,1024)
         labels: Optional[torch.LongTensor] = None,
-        images_for_llama: Optional[torch.FloatTensor] = None,  # Llama4用画像 (B,3,448,448 * tiles)
-        images_for_sam: Optional[torch.FloatTensor] = None,    # SAM用画像 (B,3,1024,1024)
+        ground_truth_masks: Optional[List[torch.Tensor]] = None,  # マスクのリスト（元サイズ）
+        original_sizes: Optional[List[Tuple[int, int]]] = None,  # 元画像サイズのリスト
         image=None,              # PIL画像 (単一入力用)
         text_prompt: str = None, # テキストプロンプト (単一入力用)
         generate_mask: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        LISA-Llama4の統合フォワードパス
+        LISA-Llama4の統合フォワードパス（シングルエンコーダー構成）
         
         処理ルート:
         1) 単一画像+テキスト (推論時)
-        2) デュアルストリーム (学習時 - 新方式)
-        3) 単一ストリーム (学習時 - 後方互換)
+        2) バッチ処理 (学習時)
         
         Args:
             input_ids: テキストトークンID
             attention_mask: アテンションマスク
-            pixel_values: 単一ストリーム用画像テンソル
-            labels: 学習用ラベル
-            images_for_llama: Llama4用画像テンソル
-            images_for_sam: SAM用画像テンソル
+            sam_pixel_values: SAM用画像テンソル (B,3,1024,1024)
+            labels: 学習用ラベル（言語モデリング用）
+            ground_truth_masks: セグメンテーション用マスクのリスト（元サイズ）
             image: PIL画像 (推論用)
             text_prompt: テキストプロンプト (推論用)
             generate_mask: セグメンテーションマスク生成フラグ
@@ -940,26 +961,25 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             Dict[str, Any]: モデル出力 (logits, masks, losses等)
         """
         try:
-            # 1. 入力検証とルーティング判定
-            route = self._validate_and_route_inputs(
-                input_ids, pixel_values, images_for_llama, 
-                images_for_sam, image, text_prompt
-            )
-            
-            # 2. デバイス取得
+            # 1. デバイス取得
             device = self._get_model_device()
             
-            # 3. ルートに応じた処理実行
-            if route == 'single':
+            # 2. ルーティング判定（シングルエンコーダー構成）
+            if image is not None and text_prompt is not None:
+                # 単一画像・テキスト入力（推論用）
                 return self._forward_single(image, text_prompt, generate_mask, device)
-            elif route == 'dual_stream':
-                return self._forward_dual_stream_batch(
-                    input_ids, attention_mask, images_for_llama, images_for_sam,
-                    labels, generate_mask, **kwargs
+            elif sam_pixel_values is not None and input_ids is not None:
+                # バッチ処理（学習・評価用）
+                return self._forward_batch(
+                    input_ids, attention_mask, sam_pixel_values, 
+                    labels, ground_truth_masks, generate_mask, device, 
+                    original_sizes=original_sizes, **kwargs
                 )
-            elif route == 'single_stream':
-                return self._forward_single_stream_batch(
-                    input_ids, attention_mask, pixel_values, labels, generate_mask, device
+            else:
+                raise ValueError(
+                    "無効な入力の組み合わせです。以下のいずれかを指定してください:\n"
+                    "- 推論: image + text_prompt\n"
+                    "- バッチ: sam_pixel_values + input_ids"
                 )
                 
         except Exception as e:
@@ -1058,94 +1078,49 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                 results["predicted_masks"] = None
         return results
 
-    def _forward_single_stream_batch(self, input_ids, attention_mask, pixel_values, labels, generate_mask, device):
+    def _forward_batch(self, input_ids, attention_mask, sam_pixel_values, labels, ground_truth_masks, generate_mask, device, original_sizes=None, **kwargs):
         """
-        単一ストリームバッチ処理（学習・推論両対応）
-        
-        事前にトークン化・前処理されたバッチ入力に対する統合処理。
-        学習時の効率的バッチ処理と推論時の高スループットを両立する
-        最適化された処理パスです。
-        
-        ## 設計思想
-        - 学習効率性とバッチスループットの最適化
-        - 統一損失計算（CompositeLoss）による一貫性
-        - SEGトークン最適化処理の活用
-        - メモリ効率的なデバイス管理
+        シングルエンコーダー構成のバッチ処理（学習・推論両対応）
         
         ## 処理アーキテクチャ
-        1. Llama-4テキスト・画像統合処理
-        2. SEGトークン検出・隠れ状態抽出
-        3. 最適化SAM埋め込み生成
-        4. 並列マスク生成・統合
-        5. CompositeLoss統一損失計算
+        1. SAMビジョンエンコーダーによる画像処理
+        2. Llama-4による純粋なテキスト処理（画像なし）
+        3. SEGトークン検出・隠れ状態抽出
+        4. LLM→SAMプロジェクション層による特徴変換
+        5. SAMマスクデコーダーによるセグメンテーション
+        6. 統合損失計算
         
         Args:
-            input_ids (torch.LongTensor): トークン化入力 [B, seq_len]
-                - SEGトークンを含むシーケンス
-                - Llama-4語彙でエンコード済み
-                
-            attention_mask (torch.Tensor): アテンションマスク [B, seq_len]
-                - パディング位置の制御
-                - SEGトークン位置も有効化
-                
-            pixel_values (torch.FloatTensor): 正規化画像 [B, C, H, W]
-                - Llama-4プロセッサ処理済み
-                - 通常 [B, 3, 336, 336]
-                
-            labels (torch.LongTensor, optional): 学習ラベル [B, seq_len]
-                - 学習時のみ使用
-                - -100でマスク箇所指定
-                
-            generate_mask (bool): セグメンテーション実行フラグ
-                - True: SAM統合処理実行
-                - False: テキストのみ（高速）
-                
-            device (torch.device): 主処理デバイス
-                - 統一デバイス管理の基準
+            input_ids: トークン化入力 [B, seq_len]
+            attention_mask: アテンションマスク [B, seq_len]
+            sam_pixel_values: SAM用画像 [B, 3, 1024, 1024]
+            labels: 言語モデリング用ラベル [B, seq_len]
+            ground_truth_masks: セグメンテーション用マスクのリスト（元サイズ）
+            generate_mask: セグメンテーション実行フラグ
+            device: 処理デバイス
         
         Returns:
             Dict[str, Any]: バッチ処理結果
-                - 'text_loss': テキスト生成損失 (torch.Tensor)
-                - 'logits': 言語モデル出力 [B, seq_len, vocab_size]
-                - 'hidden_states': 最終隠れ状態 [B, seq_len, hidden_size]
-                - 'predicted_masks': バッチマスク [N_seg, 1, H, W]
-                - 'losses': 詳細損失内訳
-                - 'model_outputs': 統合出力情報
-        
-        Performance:
-            - バッチサイズ1-8で最適化
-            - GPU分散時は自動負荷分散
-            - メモリ使用量: ~20-40GB（バッチサイズ依存）
-            
-        Example:
-            ```python
-            # 学習用バッチ処理
-            result = model._forward_single_stream_batch(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'], 
-                pixel_values=batch['pixel_values'],
-                labels=batch['labels'],
-                generate_mask=True,
-                device=torch.device('cuda:0')
-            )
-            loss = result['losses']['total_loss']
-            ```
         """
-        if pixel_values.numel() == 0:
-            raise ValueError("pixel_valuesが空です。画像入力が必要です。")
-        # Llamaモデル前方計算
-        if not hasattr(self, '_debug_counter'):
-            self._debug_counter = 1
-        else:
-            self._debug_counter += 1
-        if self._debug_counter <= 5:
-            print(f"🔍 Llama入力 (single stream #{self._debug_counter}): input_ids{input_ids.shape}, pixel_values{pixel_values.shape}, labels{labels.shape if labels is not None else None}")
-        elif self._debug_counter == 6:
-            print("🔇 Llama入力のデバッグ出力を省略します")
+        # 1. SAMビジョンエンコーダーで画像を処理
+        if sam_pixel_values.numel() == 0:
+            raise ValueError("sam_pixel_valuesが空です。画像入力が必要です。")
+        
+        # SAM画像のデバイス転送
+        sam_pixel_values = self._prepare_sam_inputs_for_device(
+            sam_pixel_values, description="SAM画像入力"
+        )
+        
+        # SAMエンコーダーで画像特徴抽出
+        # 訓練時は勾配を保持しない（SAMは凍結されているため）
+        with torch.no_grad():
+            image_embeddings = self.sam_model.image_encoder(sam_pixel_values)
+        
+        # 2. Llama-4で純粋なテキスト処理（画像なし）
         outputs = self.llama_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            pixel_values=pixel_values,
+            # pixel_valuesは渡さない（シングルエンコーダー構成）
             labels=labels,
             output_hidden_states=True,
             return_dict=True
@@ -1155,29 +1130,270 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             "logits": outputs.logits,
             "hidden_states": outputs.hidden_states
         }
-        # セグメンテーションマスク生成処理
+        # 3. SEGトークン検出とマスク生成
         if generate_mask and self.sam_model is not None:
             seg_positions = self._detect_seg_tokens(input_ids)
             if len(seg_positions[0]) > 0:
                 print(f"バッチ内SEGトークン数: {len(seg_positions[0])}")
-                batch_size = pixel_values.shape[0]
-                sam_features_list = self._prepare_sam_image_features(pixel_values, device)
-                masks = self._generate_masks_from_seg_tokens_batch(outputs.hidden_states[-1], seg_positions, sam_features_list, device)
-                results["predicted_masks"] = masks if masks is not None else None
+                
+                # 最終層の隠れ状態を取得
+                hidden_states = outputs.hidden_states[-1]
+                
+                # SEGトークン位置の隠れ状態を抽出
+                seg_hidden_states = []
+                for batch_idx, token_idx in zip(seg_positions[0], seg_positions[1]):
+                    seg_hidden_states.append(hidden_states[batch_idx, token_idx])
+                seg_hidden_states = torch.stack(seg_hidden_states)
+                
+                # デバイスを確認して移動
+                projector_device = next(self.multi_modal_projector.parameters()).device
+                if seg_hidden_states.device != projector_device:
+                    seg_hidden_states = seg_hidden_states.to(projector_device)
+                
+                # 4. プロジェクション層でLLM→SAM変換
+                sparse_prompt_embeddings = self.multi_modal_projector(seg_hidden_states)
+                
+                # 5. SAMマスクデコーダーでセグメンテーション
+                predicted_masks = []
+                batch_size = sam_pixel_values.shape[0]
+                
+                # バッチ内の各画像に対してマスク生成
+                seg_idx = 0
+                for batch_idx in range(batch_size):
+                    # この画像に対応するSEGトークンを検索
+                    batch_seg_indices = (seg_positions[0] == batch_idx).nonzero(as_tuple=True)[0]
+                    
+                    if len(batch_seg_indices) > 0:
+                        # 画像埋め込みを取得
+                        image_embedding = image_embeddings[batch_idx:batch_idx+1]
+                        
+                        # 対応するプロンプト埋め込みを取得
+                        batch_prompts = sparse_prompt_embeddings[seg_idx:seg_idx+len(batch_seg_indices)]
+                        seg_idx += len(batch_seg_indices)
+                        
+                        # SAMコンポーネントのデバイスに合わせる
+                        sam_device = image_embedding.device
+                        if batch_prompts.device != sam_device:
+                            batch_prompts = batch_prompts.to(sam_device)
+                        
+                        # マスクデコーダーを実行
+                        # 訓練時は勾配を保持、推論時はno_gradで高速化
+                        if self.training:
+                            # SAMプロンプトエンコーダーでスパース埋め込みを処理
+                            sparse_embeddings, dense_embeddings = self.sam_model.prompt_encoder(
+                                points=None,
+                                boxes=None, 
+                                masks=None,
+                                text_embeds=batch_prompts.unsqueeze(0).to(torch.float32)
+                            )
+                            
+                            # マスクデコーダー実行
+                            low_res_masks, iou_predictions = self.sam_model.mask_decoder(
+                                image_embeddings=image_embedding,
+                                image_pe=self.sam_model.prompt_encoder.get_dense_pe(),
+                                sparse_prompt_embeddings=sparse_embeddings,
+                                dense_prompt_embeddings=dense_embeddings,
+                                multimask_output=False
+                            )
+                        else:
+                            with torch.no_grad():
+                                # SAMプロンプトエンコーダーでスパース埋め込みを処理
+                                sparse_embeddings, dense_embeddings = self.sam_model.prompt_encoder(
+                                    points=None,
+                                    boxes=None, 
+                                    masks=None,
+                                    text_embeds=batch_prompts.unsqueeze(0).to(torch.float32)
+                                )
+                                
+                                # マスクデコーダー実行
+                                low_res_masks, iou_predictions = self.sam_model.mask_decoder(
+                                    image_embeddings=image_embedding,
+                                    image_pe=self.sam_model.prompt_encoder.get_dense_pe(),
+                                    sparse_prompt_embeddings=sparse_embeddings,
+                                    dense_prompt_embeddings=dense_embeddings,
+                                    multimask_output=False
+                                )
+                        
+                        # 最初のマスクを選択（multimask_output=Falseなので1つのみ）
+                        # low_res_masks: (1, 1, 256, 256) -> (256, 256)
+                        mask = low_res_masks[0, 0, :, :]
+                        predicted_masks.append(mask)
+                
+                # 複数のマスクをスタック（各マスクは256x256）
+                if predicted_masks:
+                    results["predicted_masks"] = torch.stack(predicted_masks)  # (N, 256, 256)
+                else:
+                    results["predicted_masks"] = None
             else:
                 results["predicted_masks"] = None
         else:
-            # マスク生成しない場合でもマスクを設定（CompositeLoss統一のため）
             results["predicted_masks"] = None
         
-        # 統一CompositeLoss処理
-        loss_results = self._compute_composite_loss(
-            outputs, labels, results["predicted_masks"], 
-            ground_truth_mask=None, description="(single stream)"
-        )
-        results.update(loss_results)
+        # 6. 損失計算
+        losses = {}
+        
+        # 言語モデリング損失
+        if outputs.loss is not None:
+            losses['lm_loss'] = outputs.loss
+        
+        # セグメンテーション損失
+        if results["predicted_masks"] is not None and ground_truth_masks is not None:
+            # マスクのリサイズ処理を追加
+            seg_loss = self._compute_segmentation_loss(
+                results["predicted_masks"], ground_truth_masks, 
+                sam_input_size=(self.sam_image_size, self.sam_image_size),
+                original_sizes=original_sizes
+            )
+            losses['seg_loss'] = seg_loss
+            
+            # 総損失
+            losses['total_loss'] = losses.get('lm_loss', 0) + losses.get('seg_loss', 0)
+        else:
+            losses['total_loss'] = losses.get('lm_loss', 0)
+        
+        results['losses'] = losses
+        
+        # テスト用に統一された出力形式を提供
+        results['loss'] = losses['total_loss']  # 互換性のため
+        results['pred_masks'] = results.get('predicted_masks')  # エイリアス
         
         return results
+
+    def _compute_segmentation_loss(self, predicted_masks, ground_truth_masks, sam_input_size=(1024, 1024), original_sizes=None):
+        """
+        セグメンテーション損失の計算（Original-LISA準拠）
+        
+        Args:
+            predicted_masks: 予測マスク（SAMデコーダー出力、256x256）
+            ground_truth_masks: 正解マスク（元画像サイズのリスト）
+            sam_input_size: SAMへの入力画像サイズ（デフォルト: 1024x1024）
+            original_sizes: 元画像のサイズリスト（Original-LISA準拠）
+        
+        Returns:
+            torch.Tensor: セグメンテーション損失（DICE + BCE）
+        """
+        # Original-LISAの損失関数を定義
+        def dice_loss(inputs, targets, num_masks, scale=1000, eps=1e-6):
+            """Original-LISAのdice_loss実装"""
+            inputs = inputs.sigmoid()
+            inputs = inputs.flatten(1)  # (N, H*W)に変換
+            targets = targets.flatten(1)
+            numerator = 2 * (inputs / scale * targets).sum(-1)
+            denominator = (inputs / scale).sum(-1) + (targets / scale).sum(-1)
+            loss = 1 - (numerator + eps) / (denominator + eps)
+            loss = loss.sum() / (num_masks + 1e-8)
+            return loss
+        
+        def sigmoid_ce_loss(inputs, targets, num_masks):
+            """Original-LISAのsigmoid_ce_loss実装"""
+            loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+            loss = loss.flatten(1).mean(1).sum() / (num_masks + 1e-8)
+            return loss
+        
+        # 全マスクを収集（リサイズ済み）
+        all_pred_masks = []
+        all_gt_masks = []
+        
+        for i, (pred_mask, gt_mask) in enumerate(zip(predicted_masks, ground_truth_masks)):
+            # 予測マスクの形状を確認
+            if pred_mask.dim() == 4 and pred_mask.shape[0] == 1:
+                pred_mask = pred_mask.squeeze(0)  # (1, 1, 256, 256) -> (1, 256, 256)
+            elif pred_mask.dim() == 2:
+                pred_mask = pred_mask.unsqueeze(0)  # (256, 256) -> (1, 256, 256)
+            
+            # 正解マスクのサイズを取得
+            gt_h, gt_w = gt_mask.shape[-2:]
+            
+            # 元画像サイズの取得（Original-LISA準拠）
+            if original_sizes is not None and i < len(original_sizes):
+                original_h, original_w = original_sizes[i]
+            else:
+                # original_sizesが提供されない場合はgtマスクのサイズを使用
+                original_h, original_w = gt_h, gt_w
+            
+            # SAMの公式postprocess_masksメソッドを使用（Original-LISA参照）
+            if hasattr(self.sam_model, 'postprocess_masks'):
+                # 入力を(1, 1, 256, 256)形式に
+                pred_mask_4d = pred_mask.unsqueeze(0) if pred_mask.dim() == 3 else pred_mask
+                # SAMの公式メソッドを使用
+                # Original-LISAと同様に、input_sizeはSAMへの入力サイズ、original_sizeは元画像サイズ
+                pred_mask_resized = self.sam_model.postprocess_masks(
+                    pred_mask_4d,
+                    input_size=sam_input_size,  # SAMへの入力画像サイズ（通常1024x1024）
+                    original_size=(original_h, original_w)  # 元画像のサイズ
+                )
+                # (1, 1, H, W) -> (1, H, W)
+                pred_mask_resized = pred_mask_resized.squeeze(0)
+            else:
+                # フォールバック: 手動リサイズ
+                if pred_mask.dim() == 3:
+                    pred_mask_resized = F.interpolate(
+                        pred_mask.unsqueeze(0),  # (1, 1, H, W)に
+                        size=(original_h, original_w),  # 元画像サイズにリサイズ
+                        mode='bilinear',
+                        align_corners=False
+                    ).squeeze(0)  # (1, H, W)に
+                else:
+                    raise ValueError(f"予期しないマスク次元: {pred_mask.dim()}")
+            
+            # デバイスを統一
+            device = pred_mask_resized.device
+            gt_mask = gt_mask.float().to(device)
+            
+            # 次元を(N, H, W)に統一
+            if pred_mask_resized.dim() == 2:
+                pred_mask_resized = pred_mask_resized.unsqueeze(0)
+            if gt_mask.dim() == 2:
+                gt_mask = gt_mask.unsqueeze(0)
+            
+            all_pred_masks.append(pred_mask_resized)
+            all_gt_masks.append(gt_mask)
+        
+        # 全マスクを処理（Original-LISA方式を参考に、異なるサイズに対応）
+        if all_pred_masks:
+            # 異なるサイズのマスクがある場合は個別に処理
+            # 勾配を保持するため、最初のマスクのデバイスでTensorとして初期化
+            device = all_pred_masks[0].device
+            total_dice_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            total_bce_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            total_num_masks = 0
+            
+            # Original-LISA方式：バッチごとに処理
+            for pred_mask, gt_mask in zip(all_pred_masks, all_gt_masks):
+                # このバッチのマスク数（通常は1）
+                batch_num_masks = pred_mask.shape[0]
+                
+                # DICE損失を計算
+                dice_loss_val = dice_loss(pred_mask, gt_mask, batch_num_masks)
+                # スカラー値に変換してから累積（勾配グラフ保持）
+                if isinstance(dice_loss_val, torch.Tensor):
+                    total_dice_loss = total_dice_loss + dice_loss_val * batch_num_masks
+                else:
+                    total_dice_loss = total_dice_loss + dice_loss_val * batch_num_masks
+                
+                # BCE損失を計算
+                bce_loss_val = sigmoid_ce_loss(pred_mask, gt_mask, batch_num_masks)
+                # スカラー値に変換してから累積（勾配グラフ保持）
+                if isinstance(bce_loss_val, torch.Tensor):
+                    total_bce_loss = total_bce_loss + bce_loss_val * batch_num_masks
+                else:
+                    total_bce_loss = total_bce_loss + bce_loss_val * batch_num_masks
+                
+                total_num_masks += batch_num_masks
+            
+            # 正規化
+            if total_num_masks > 0:
+                total_dice_loss = total_dice_loss / total_num_masks
+                total_bce_loss = total_bce_loss / total_num_masks
+            
+            # 重み付けは1.0（デフォルト）
+            total_seg_loss = total_dice_loss + total_bce_loss
+        else:
+            # マスクがない場合
+            device = next(self.parameters()).device
+            total_seg_loss = torch.tensor(0.0, device=device)
+        
+        return total_seg_loss
 
     def _optimize_llama4_tiling_processing(self, images_for_llama, batch_size):
         """
@@ -1979,6 +2195,8 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
         return self
 
     def _initialize_seg_token_embedding_optimized(self, tokenizer, seg_token_id):
+        # 注: このメソッドは公式のresize_token_embeddings(mean_resizing=True)に置き換えられました
+        # 互換性のために残していますが、使用は推奨されません
         """
         最新研究に基づく最適化されたSEGトークン埋め込み初期化
         

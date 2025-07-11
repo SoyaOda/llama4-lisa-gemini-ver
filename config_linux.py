@@ -41,6 +41,11 @@ WEIGHTS_DIR = str(PROJECT_ROOT / "weights")
 # 使用モデル
 LLAMA_MODEL_ID = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
 
+# 高速ロード設定
+USE_SAFETENSORS = True  # safetensors形式を優先的に使用
+SAFETENSORS_MODEL_PATH = "./models/llama4-scout-safetensors"  # 変換済みモデルパス
+LOW_CPU_MEM_USAGE = True  # CPU→GPU転送を最適化（メモリ使用量削減）
+
 # Llama-4-Scout-17B-16E-Instruct設定（テストスクリプト実使用値）
 ATTN_IMPLEMENTATION = "eager"           # flex_attentionバグ回避（実証済み）
 DEVICE_MAP = "auto"                     # GPU自動分散（実使用値）
