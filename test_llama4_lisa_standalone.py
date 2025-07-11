@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-LISA-Llama4統合モデル 単独テストスクリプト
+LISA-Llama4統合モデル 単独テストスクリプト（シングルエンコーダー構成対応版）
 test_llama4_standalone.pyを参考に、LISA統合モデル特有の機能もテスト
 
 実行方法:
-Lambda Cloud (129.213.148.184):
-rsync -avz --progress --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='lambda_results' --exclude='verification_output' --exclude='vis_output' --exclude='.gitignore' -e "ssh -i ~/.ssh/lambda_cloud_key" ./ ubuntu@129.213.148.184:/lambda/nfs/lisa-gemma-project-fs/code/LISA-Gemma-Linux/
+Lambda Cloud:
+rsync -avz --progress --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='lambda_results' --exclude='verification_output' --exclude='vis_output' --exclude='.gitignore' -e "ssh -i ~/.ssh/lambda_cloud_key" ./ ubuntu@<ip_address>:/lambda/nfs/lisa-gemma-project-fs/code/LISA-Gemma-Linux/
 
-ssh -i ~/.ssh/lambda_cloud_key ubuntu@129.213.148.184 "cd /lambda/nfs/lisa-gemma-project-fs/code/LISA-Gemma-Linux && source ../../venvs/lisa_gemma_venv/bin/activate && CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PYTHONUNBUFFERED=1 python -u test_llama4_lisa_standalone.py 2>&1"
+ssh -i ~/.ssh/lambda_cloud_key ubuntu@<ip_address> "cd /lambda/nfs/lisa-gemma-project-fs/code/LISA-Gemma-Linux && source ../../venvs/lisa_gemma_venv/bin/activate && CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PYTHONUNBUFFERED=1 python -u test_llama4_lisa_standalone.py 2>&1"
 """
 
 import os
@@ -289,10 +289,16 @@ class LisaLlama4StandaloneTest:
             
             if 'input_ids' in inputs:
                 logger.info(f"input_ids shape: {inputs['input_ids'].shape}")
-            if 'pixel_values' in inputs:
-                logger.info(f"pixel_values shape: {inputs['pixel_values'].shape}")
+            if 'sam_pixel_values' in inputs:
+                logger.info(f"sam_pixel_values shape: {inputs['sam_pixel_values'].shape}")
             if 'attention_mask' in inputs:
                 logger.info(f"attention_mask shape: {inputs['attention_mask'].shape}")
+            
+            # シングルエンコーダー構成の確認
+            if 'pixel_values' in inputs:
+                logger.warning("⚠️ pixel_valuesが存在します（シングルエンコーダーでは不要）")
+            if 'sam_pixel_values' not in inputs:
+                logger.warning("⚠️ sam_pixel_valuesが存在しません（シングルエンコーダーでは必須）")
             
             self.test_results["multimodal_input"] = {
                 "success": True,
@@ -342,6 +348,10 @@ class LisaLlama4StandaloneTest:
                 logger.info(f"loss: {loss}")
                 logger.info(f"loss type: {type(loss)}")
             
+            # シングルエンコーダー構成の確認
+            if 'sam_image_embeddings' in outputs:
+                logger.info(f"✅ SAM画像埋め込み生成: {outputs['sam_image_embeddings'].shape}")
+            
             self.test_results["forward_pass"] = {
                 "success": True,
                 "output_keys": list(outputs.keys()),
@@ -374,7 +384,7 @@ class LisaLlama4StandaloneTest:
                 return True
             
             # SAM付きテスト（実際にSAMが利用可能な場合）
-            test_image = Image.new('RGB', (224, 224), color='green')
+            test_image = Image.new('RGB', (1024, 768), color='green')  # 異なるサイズでテスト
             test_prompt = "この画像の中心部分を[SEG]してください。"
             
             logger.info("SAM機能付き順伝播実行中...")
@@ -390,11 +400,23 @@ class LisaLlama4StandaloneTest:
             if 'pred_masks' in outputs:
                 masks = outputs['pred_masks']
                 logger.info(f"予測マスク shape: {masks.shape if masks is not None else 'None'}")
+                
+                # シングルエンコーダー構成での動作確認
+                if masks is not None:
+                    # マスクが元の画像サイズにリサイズされているか確認
+                    expected_h, expected_w = test_image.height, test_image.width
+                    if len(masks.shape) >= 2:
+                        mask_h, mask_w = masks.shape[-2:]  # 最後の2次元を取得
+                        if mask_h == expected_h and mask_w == expected_w:
+                            logger.info(f"✅ マスクが元の画像サイズにリサイズされています: {mask_h}x{mask_w}")
+                        else:
+                            logger.warning(f"⚠️ マスクサイズが元画像と異なります: {mask_h}x{mask_w} (期待値: {expected_h}x{expected_w})")
             
             self.test_results["sam_functionality"] = {
                 "success": True,
                 "has_sam": has_sam,
-                "mask_generated": 'pred_masks' in outputs and outputs['pred_masks'] is not None
+                "mask_generated": 'pred_masks' in outputs and outputs['pred_masks'] is not None,
+                "single_encoder_mode": True
             }
             
             logger.info("✅ SAM機能テスト完了")

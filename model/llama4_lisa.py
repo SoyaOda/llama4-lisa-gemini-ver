@@ -293,7 +293,11 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
         self.seg_token_id = tokenizer.convert_tokens_to_ids(self.seg_token)
         print(f"SEGトークンID: {self.seg_token_id}")
         
-        # 6.1 埋め込み層のリサイズ（追加トークンに対応）
+        # 6.1 Llama-4のネイティブな<|image|>トークンを使用
+        # 注：Llama-4では<|image|>トークンが自動的に処理されるため、
+        # 手動での追加は不要（apply_chat_templateが自動挿入）
+        
+        # 6.2 埋め込み層のリサイズ（追加トークンに対応）
         current_vocab_size = len(tokenizer)
         embed_size = self.llama_model.get_input_embeddings().weight.shape[0]
         print(f"現在の埋め込みボキャブラリサイズ: {embed_size}, トークナイザー語彙数: {current_vocab_size}")
@@ -386,28 +390,27 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
 
     def prepare_multimodal_input(self, image, text_prompt, for_training=False):
         """
-        マルチモーダル入力の統一前処理
+        マルチモーダル入力の統一前処理（シングルエンコーダー構成対応）
         
         LISA-Llama4統合モデル用のマルチモーダル入力（画像+テキスト）を準備します。
-        Llama-4-Scout-17B-16E-Instructのネイティブマルチモーダル機能を活用し、
-        適切なチャットテンプレートとトークン化を適用します。
+        シングルエンコーダー構成では、画像処理はSAMが行うため、Llama4には
+        テキストのみを入力します。
         
         ## 設計思想
-        - Llama-4のネイティブ画像処理能力を最大活用
+        - シングルエンコーダー構成：SAMが全ての画像処理を担当
+        - Llama4は純粋な言語モデルとして動作
+        - <image>トークンで画像の存在を示す
         - SEGトークンの適切な配置とエンコーディング
-        - 学習・推論両対応の統一インターフェース
-        - BatchFeature→dict変換でPyTorch互換性確保
         
         Args:
             image (PIL.Image.Image): 入力画像
                 - RGB形式推奨（自動変換対応）
-                - 任意サイズ（Llama-4プロセッサが自動リサイズ）
+                - 任意サイズ（SAMエンコーダーが処理）
                 - 推奨：高解像度画像でセグメンテーション精度向上
                 
             text_prompt (str): テキストプロンプト
                 - [SEG]トークンを含むセグメンテーション指示
                 - 例："この画像で赤い車を[SEG]してください"
-                - チャットテンプレート適用でLlama-4最適化
                 
             for_training (bool, optional): 学習モードフラグ
                 - True: labels生成、勾配計算対応
@@ -417,7 +420,7 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             Dict[str, torch.Tensor]: 前処理済み入力辞書
                 - 'input_ids': トークン化されたテキスト [1, seq_len]
                 - 'attention_mask': アテンションマスク [1, seq_len]  
-                - 'pixel_values': 正規化済み画像テンソル [1, C, H, W]
+                - 'sam_pixel_values': SAM用画像テンソル [1, 3, 1024, 1024]
                 - ('labels'): 学習時のみ、トークンラベル [1, seq_len]
         
         Raises:
@@ -431,85 +434,99 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                 image=PIL.Image.open("cat.jpg"),
                 text_prompt="この画像で猫を[SEG]してください"
             )
-            
-            # 学習用途  
-            inputs = model.prepare_multimodal_input(
-                image=train_image,
-                text_prompt=train_prompt,
-                for_training=True
-            )
-            outputs = model(**inputs)
             ```
             
         Note:
-            - SEGトークンが含まれていない場合は自動で末尾に追加
-            - Llama-4の最大コンテキスト長（128K）内でトークン数調整
-            - GPU分散環境では適切なデバイス配置も自動処理
+            - シングルエンコーダー構成では画像はSAMが処理
+            - Llama4には<image>トークンを含むテキストのみを入力
+            - pixel_valuesは生成されない（SAMが画像処理を担当）
         """
         if for_training:
             # Training時: 生のtensorを使用（apply_chat_templateは使わない）
-            # これは_forward_dual_stream_batchで既に正しく実装済み
             raise ValueError("Training時はこのメソッドを使わず、直接tensorを渡してください")
         else:
-            # Inference時: apply_chat_templateを使用
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": text_prompt}
-                    ]
-                }
-            ]
+            # シングルエンコーダー構成：Llama-4のネイティブな画像トークンを活用
             
             try:
-                # Llama4の公式Processorでチャットテンプレート適用
-                inputs = self.llama_processor.apply_chat_template(
+                # シングルエンコーダー構成の実装方針：
+                # 1. Llama-4のネイティブな<|image|>トークンを活用
+                # 2. apply_chat_templateを使用してフォーマット
+                # 3. tokenizerのみを使用して画像処理をバイパス
+                
+                messages = [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "image"},  # 画像プレースホルダー
+                            {"type": "text", "text": text_prompt}
+                        ]
+                    }
+                ]
+                
+                # apply_chat_templateでLlama-4形式のテキストを生成
+                # これにより<|image|>トークンが自動的に挿入される
+                chat_text = self.llama_processor.apply_chat_template(
                     messages,
                     add_generation_prompt=True,
-                    tokenize=True,
-                    return_dict=True,
-                    return_tensors="pt"
+                    tokenize=False  # テキストとして取得
                 )
-                print(f"🔍 apply_chat_template結果: type={type(inputs)}, keys={list(inputs.keys())}")
                 
-                # BatchFeatureまたは辞書を辞書として扱う（両方ともdict-likeインターフェース）
-                if hasattr(inputs, 'keys') and hasattr(inputs, '__getitem__'):
-                    # 辞書形式のデータに変換（必要に応じて）
-                    result_dict = {}
-                    for key in inputs.keys():
-                        result_dict[key] = inputs[key]
-                    print(f"✅ BatchFeature/dict変換成功: keys={list(result_dict.keys())}")
-                    return result_dict
-                else:
-                    raise ValueError(f"apply_chat_templateが期待通りのdict-likeオブジェクトを返しませんでした: {type(inputs)}")
-            except Exception as e:
-                print(f"⚠️ apply_chat_template エラー: {e}")
-                print("🔄 フォールバック: 基本的なtokenization")
+                # テキストのみをトークン化（画像処理はSAMが行う）
+                inputs = self.llama_processor.tokenizer(
+                    chat_text,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.config.model_max_length
+                )
                 
-                # フォールバック: 基本的なtokenization
+                # SAM用の画像準備
+                sam_transform = transforms.Compose([
+                    transforms.Resize((self.config.sam_image_size, self.config.sam_image_size)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ])
+                
                 if isinstance(image, torch.Tensor):
-                    pixel_values = image.unsqueeze(0) if image.dim() == 3 else image
+                    sam_pixel_values = image.unsqueeze(0) if image.dim() == 3 else image
                 else:
-                    # PIL to tensor conversion
-                    import torchvision.transforms as transforms
-                    transform = transforms.Compose([
-                        transforms.Resize((448, 448)),
+                    sam_pixel_values = sam_transform(image).unsqueeze(0)
+                
+                result_dict = {
+                    "input_ids": inputs["input_ids"],
+                    "attention_mask": inputs["attention_mask"],
+                    "sam_pixel_values": sam_pixel_values  # SAM用画像データ
+                }
+                
+                print(f"✅ シングルエンコーダー入力準備完了: keys={list(result_dict.keys())}")
+                return result_dict
+                
+            except Exception as e:
+                print(f"⚠️ トークン化エラー: {e}")
+                # フォールバック処理：手動でLlama-4形式を構築
+                # Llama-4の特殊トークンを使用
+                fallback_text = f"<|begin_of_text|><|header_start|>user<|header_end|>\n\n<|image|>{text_prompt}<|eot|><|header_start|>assistant<|header_end|>\n\n"
+                input_ids = self.llama_processor.tokenizer.encode(
+                    fallback_text, 
+                    return_tensors="pt",
+                    add_special_tokens=False  # 特殊トークンは既に含まれている
+                )
+                
+                # SAM用画像準備（フォールバック）
+                if isinstance(image, torch.Tensor):
+                    sam_pixel_values = image.unsqueeze(0) if image.dim() == 3 else image
+                else:
+                    sam_transform = transforms.Compose([
+                        transforms.Resize((1024, 1024)),
                         transforms.ToTensor(),
                         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ])
-                    pixel_values = transform(image).unsqueeze(0)
-                
-                input_ids = self.llama_processor.tokenizer.encode(
-                    text_prompt, 
-                    return_tensors="pt",
-                    add_special_tokens=True
-                )
+                    sam_pixel_values = sam_transform(image).unsqueeze(0)
                 
                 return {
                     "input_ids": input_ids,
-                    "pixel_values": pixel_values,
-                    "attention_mask": torch.ones_like(input_ids)
+                    "attention_mask": torch.ones_like(input_ids),
+                    "sam_pixel_values": sam_pixel_values
                 }
 
     def get_trainable_parameters_info(self):
