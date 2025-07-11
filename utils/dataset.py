@@ -344,6 +344,16 @@ class HybridDataset(torch.utils.data.Dataset):
         """
         dataset_idx = np.random.choice(len(self.all_datasets), p=self.sample_rate)
         selected_dataset = self.all_datasets[dataset_idx]
+        
+        # データセット名を取得
+        dataset_name = "unknown"
+        if dataset_idx < len(self.datasets):
+            dataset_name = self.datasets[dataset_idx]
+        else:
+            # フォールバック：インデックスから推測
+            dataset_types = ["sem_seg", "refer_seg", "vqa", "reason_seg"]
+            if dataset_idx < len(dataset_types):
+                dataset_name = dataset_types[dataset_idx]
         try:
             sample = selected_dataset[idx % len(selected_dataset)]
         except Exception as e:
@@ -438,17 +448,31 @@ class HybridDataset(torch.utils.data.Dataset):
             # len(sample) == 5の場合は既に処理済み
             original_size = None
 
-        # シングルエンコーダー構成：テキストのみの処理
-        # Llama4のネイティブマルチモーダルでは<image>トークンは不要
-        # 画像はpixel_valuesとして別途処理される
+        # シングルエンコーダー構成：Llama-4のapply_chat_templateを使用
+        # これにより<|image|>トークンが自動的に挿入される
         clean_prompt = text_prompt.replace('<image>\n', '').replace('<image>', '').strip()
         
-        # USER:プレフィックスを追加（<image>なし）
-        formatted_prompt = f"USER: {clean_prompt}"
+        # Llama-4のネイティブフォーマットでメッセージを作成
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},  # 画像プレースホルダー
+                    {"type": "text", "text": clean_prompt}
+                ]
+            }
+        ]
         
-        # テキストのみの処理（画像はLlama4に渡さない）
+        # apply_chat_templateでLlama-4形式のテキストを生成
+        # これにより<|image|>トークンが自動的に挿入される
+        formatted_prompt = self.llama_processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False  # テキストとして取得
+        )
+        
+        # テキストのみをトークン化（画像処理はSAMが行う）
         try:
-            # tokenize only text without images
             text_inputs = self.llama_processor.tokenizer(
                 formatted_prompt,
                 return_tensors="pt",
@@ -517,6 +541,7 @@ class HybridDataset(torch.utils.data.Dataset):
             'resize': resize if 'resize' in locals() else None,
             'questions': questions if 'questions' in locals() else None,
             'sampled_classes': sampled_classes if 'sampled_classes' in locals() else None,
+            'dataset_name': dataset_name,  # データセット名を追加
         }
 
 def collate_fn(batch: List[Dict]) -> Dict[str, Any]:

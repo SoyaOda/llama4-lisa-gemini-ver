@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-第2節：Llama4向けマルチモーダル入力フォーマットの検証
+第2節：Llama4向けマルチモーダル入力フォーマットの検証（シングルエンコーダー構成）
 全データセット・全サブタイプ対応版 (Lambda Cloud最適化)
 
 論理的根拠:
 - データが正しく準備されても、モデルが解釈できる形式に変換する過程でエラーが発生すれば学習は失敗
 - Llama4の特殊トークン配置、ラベルマスキング、バッチ処理の検証が必要
 - 各データセットのサブタイプごとに異なる処理ロジックを検証する必要がある
+- シングルエンコーダー構成：sam_pixel_valuesの存在とpixel_valuesの非存在を検証
+- Llama-4ネイティブ<|image|>トークンの自動挿入を確認
 """
 
 import os
@@ -47,12 +49,12 @@ def get_config():
 def load_heavy_libraries():
     """重いライブラリを必要時に読み込む"""
     print("📦 重いライブラリを読み込み中...")
-    global torch, DataLoader, AutoProcessor, HybridDataset, collate_fn
+    global torch, DataLoader, AutoProcessor, HybridDataset, collate_fn, setup_seg_token
     
     import torch
     from torch.utils.data import DataLoader
     from transformers import AutoProcessor
-    from utils.dataset import HybridDataset, collate_fn
+    from utils.dataset import HybridDataset, collate_fn, setup_seg_token
     
     print("✅ PyTorch, Transformers, Dataset読み込み完了")
 
@@ -158,9 +160,10 @@ def get_all_dataset_configs() -> List[Dict[str, Any]]:
     return configs
 
 def analyze_sample_tokens(input_ids: "torch.Tensor", labels: "torch.Tensor", 
-                         processor, sample_idx: int = 0) -> Dict[str, Any]:
+                         processor, sample_idx: int = 0, batch_data: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     サンプルのトークン分析（詳細版）
+    シングルエンコーダー構成の検証を追加
     """
     input_list = input_ids.tolist()
     labels_list = labels.tolist()
@@ -176,6 +179,23 @@ def analyze_sample_tokens(input_ids: "torch.Tensor", labels: "torch.Tensor",
     if seg_token_id is not None:
         seg_positions = [i for i, token_id in enumerate(input_list) if token_id == seg_token_id]
         special_tokens['seg_positions'] = seg_positions
+    
+    # <|image|>トークンの検出（Llama-4ネイティブ）
+    image_token = "<|image|>"
+    if image_token in processor.tokenizer.get_vocab():
+        image_token_id = processor.tokenizer.convert_tokens_to_ids(image_token)
+        image_positions = [i for i, token_id in enumerate(input_list) if token_id == image_token_id]
+        special_tokens['image_positions'] = image_positions
+    
+    # シングルエンコーダー構成の検証
+    single_encoder_checks = {}
+    if batch_data is not None:
+        single_encoder_checks['has_sam_pixel_values'] = 'sam_pixel_values' in batch_data
+        single_encoder_checks['has_pixel_values'] = 'pixel_values' in batch_data
+        single_encoder_checks['is_single_encoder'] = (
+            single_encoder_checks['has_sam_pixel_values'] and 
+            not single_encoder_checks['has_pixel_values']
+        )
     
     # ラベルマスキング分析
     user_turn_tokens = 0
@@ -213,7 +233,8 @@ def analyze_sample_tokens(input_ids: "torch.Tensor", labels: "torch.Tensor",
         'user_turn_tokens': user_turn_tokens,
         'model_turn_tokens': model_turn_tokens,
         'special_tokens': special_tokens,
-        'label_masking_ratio': labeled_tokens / non_pad_tokens if non_pad_tokens > 0 else 0
+        'label_masking_ratio': labeled_tokens / non_pad_tokens if non_pad_tokens > 0 else 0,
+        'single_encoder_checks': single_encoder_checks if batch_data is not None else {}
     }
 
 def verify_label_masking(input_ids: "torch.Tensor", labels: "torch.Tensor", 
@@ -319,10 +340,11 @@ def verify_label_masking(input_ids: "torch.Tensor", labels: "torch.Tensor",
 
 def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, Any]:
     """
-    全データセット・全サブタイプでの包括的検証
+    全データセット・全サブタイプでの包括的検証（シングルエンコーダー構成）
     """
     print("=" * 80)
     print("第2節: 全データセット・全サブタイプ対応マルチモーダル入力フォーマット検証")
+    print("      （シングルエンコーダー構成）")
     print("=" * 80)
     
     # 重いライブラリを読み込み
@@ -347,6 +369,11 @@ def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, A
         config.LLAMA_MODEL_ID,
         trust_remote_code=True
     )
+    
+    # [SEG]トークンを追加
+    seg_token_idx = setup_seg_token(processor.tokenizer, config.SEG_TOKEN)
+    processor.tokenizer.seg_token_id = seg_token_idx
+    print(f"✅ [SEG]トークン追加完了 (ID: {seg_token_idx})")
     
     # 全データセット設定を取得
     dataset_configs = get_all_dataset_configs()
@@ -378,16 +405,32 @@ def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, A
         dataset_start_time = time.time()
         
         try:
-            # データセット初期化（llama4_processor使用）
+            # データセット初期化（シングルエンコーダー構成）
             print(f"📦 {dataset_name} データセットを準備中...")
-            dataset = HybridDataset(
-                base_image_dir=config.DATASET_BASE_DIR,
-                llama_processor=processor,  # 正しいパラメータ名に修正
-                samples_per_epoch=samples_per_dataset,
-                dataset=dataset_type,
-                sample_rate=[1],
-                **{dataset_config['config_attr'].lower(): sub_dataset}
-            )
+            
+            # HybridDatasetの全引数を明示的に指定
+            dataset_kwargs = {
+                'base_image_dir': config.DATASET_BASE_DIR,
+                'llama_processor': processor,
+                'samples_per_epoch': samples_per_dataset,
+                'precision': "bf16",
+                'llama_image_size': config.LLAMA_IMAGE_SIZE,
+                'sam_image_size': config.SAM_IMAGE_SIZE,
+                'num_classes_per_sample': 3,
+                'exclude_val': False,
+                'dataset': dataset_type,
+                'sample_rate': [1],
+                'sem_seg_data': config.SEM_SEG_DATA if dataset_type == 'sem_seg' else None,
+                'refer_seg_data': config.REFER_SEG_DATA if dataset_type == 'refer_seg' else None,
+                'vqa_data': config.VQA_DATA if dataset_type == 'vqa' else None,
+                'reason_seg_data': config.REASON_SEG_DATA if dataset_type == 'reason_seg' else None,
+                'explanatory': 0.1
+            }
+            
+            # 特定のデータセットのサブタイプを上書き
+            dataset_kwargs[dataset_config['config_attr'].lower()] = sub_dataset
+            
+            dataset = HybridDataset(**dataset_kwargs)
             
             # DataLoader作成（config_linux.pyのバッチサイズを使用）
             dataloader = DataLoader(
@@ -430,11 +473,23 @@ def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, A
                         if sample_count >= samples_per_dataset:
                             break
                         
-                        # トークン分析
+                        # トークン分析（シングルエンコーダー構成の検証を含む）
                         token_analysis = analyze_sample_tokens(
-                            input_ids[i], labels[i], processor, sample_count
+                            input_ids[i], labels[i], processor, sample_count, batch
                         )
                         dataset_results['token_statistics'].append(token_analysis)
+                        
+                        # シングルエンコーダー構成の検証結果を表示
+                        if sample_count == 0:  # 最初のサンプルのみ
+                            single_encoder = token_analysis.get('single_encoder_checks', {})
+                            if single_encoder:
+                                print(f"  🔧 シングルエンコーダー構成確認:")
+                                sam_status = "✅" if single_encoder.get('has_sam_pixel_values') else "❌"
+                                pixel_status = "❌" if not single_encoder.get('has_pixel_values') else "⚠️ 存在（不要）"
+                                config_status = "✅ シングルエンコーダー" if single_encoder.get('is_single_encoder') else "❌ デュアルエンコーダー"
+                                print(f"    - sam_pixel_values: {sam_status}")
+                                print(f"    - pixel_values: {pixel_status}")
+                                print(f"    - 構成確認: {config_status}")
                         
                         # ラベルマスキング検証
                         is_correct, masking_result = verify_label_masking(
@@ -471,12 +526,23 @@ def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, A
                 avg_seq_len = sum(s['sequence_length'] for s in dataset_results['token_statistics']) / len(dataset_results['token_statistics'])
                 avg_labeled_tokens = sum(s['labeled_tokens'] for s in dataset_results['token_statistics']) / len(dataset_results['token_statistics'])
                 seg_detection_rate = sum(1 for s in dataset_results['token_statistics'] if s['special_tokens'].get('seg_positions', [])) / len(dataset_results['token_statistics'])
+                image_token_rate = sum(1 for s in dataset_results['token_statistics'] if s['special_tokens'].get('image_positions', [])) / len(dataset_results['token_statistics'])
+                
+                # シングルエンコーダー構成の統計
+                single_encoder_stats = {'verified': 0, 'correct': 0}
+                for s in dataset_results['token_statistics']:
+                    if s.get('single_encoder_checks'):
+                        single_encoder_stats['verified'] += 1
+                        if s['single_encoder_checks'].get('is_single_encoder'):
+                            single_encoder_stats['correct'] += 1
                 
                 dataset_results['statistics'] = {
                     'avg_sequence_length': avg_seq_len,
                     'avg_labeled_tokens': avg_labeled_tokens,
                     'seg_detection_rate': seg_detection_rate,
-                    'success_rate': successful_count / sample_count if sample_count > 0 else 0
+                    'image_token_rate': image_token_rate,
+                    'success_rate': successful_count / sample_count if sample_count > 0 else 0,
+                    'single_encoder_rate': single_encoder_stats['correct'] / single_encoder_stats['verified'] if single_encoder_stats['verified'] > 0 else 0
                 }
             
             # 結果表示
@@ -484,6 +550,14 @@ def run_comprehensive_verification(samples_per_dataset: int = 25) -> Dict[str, A
             print(f"✅ {dataset_name} 検証完了")
             print(f"  処理時間: {dataset_results['processing_time']:.2f}秒")
             print(f"  成功率: {success_rate:.1f}% ({successful_count}/{sample_count})")
+            
+            if 'statistics' in dataset_results:
+                stats = dataset_results['statistics']
+                print(f"  📊 統計情報:")
+                print(f"    - 平均シーケンス長: {stats['avg_sequence_length']:.1f}")
+                print(f"    - SEGトークン検出率: {stats['seg_detection_rate']*100:.1f}%")
+                print(f"    - <|image|>トークン検出率: {stats['image_token_rate']*100:.1f}%")
+                print(f"    - シングルエンコーダー構成率: {stats['single_encoder_rate']*100:.1f}%")
             
             if success_rate == 100:
                 verification_results['summary']['successful_datasets'] += 1

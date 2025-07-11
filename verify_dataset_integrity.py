@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-LISA-Llama4 Dataset Integrity Verification
+LISA-Llama4 Dataset Integrity Verification (Single-Encoder Configuration)
 Lambda Cloud最適化版 - 軽量化とライブラリ遅延読み込み
 
-HybridDatasetが各サブデータセットを正しく処理し、意図した通りの学習サンプルを生成しているかを
-目視で確認するための検証スクリプト。
+HybridDatasetがシングルエンコーダー構成で正しく動作し、
+意図した通りの学習サンプルを生成しているかを検証するスクリプト。
 
-論理的根拠:
-- データパイプラインの欠陥は最も一般的かつ致命的なエラー源
-- 画像とテキストのペア不整合、セグメンテーションマスクの間違い、対話ターンの不適切な形式を検出
-- 各データソースの「意味的意図」が最終的な学習サンプル形式で正しく保持されているかを保証
+主な検証内容:
+- sam_pixel_valuesが正しく生成されているか
+- pixel_values（Llama4用）が生成されていないか
+- Llama-4ネイティブフォーマットでテキストが処理されているか
+- <|image|>トークンが自動挿入されているか
 """
 
 import os
@@ -28,7 +29,7 @@ import json
 # from PIL import Image  # 遅延読み込み
 # from torchvision.transforms import ToPILImage  # 遅延読み込み
 
-print("🚀 LISA-Llama4 Dataset Integrity Verification (Lambda Cloud Optimized)")
+print("🚀 LISA-Llama4 Dataset Integrity Verification (Single-Encoder Configuration)")
 print("📦 基本ライブラリ読み込み完了")
 
 # プロジェクトのルートディレクトリをsys.pathに追加
@@ -58,12 +59,13 @@ def parse_args():
         default=["sem_seg", "refer_seg", "vqa", "reason_seg"],
         help="List of sub-dataset names to inspect"
     )
-    parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to inspect per dataset")
+    parser.add_argument("--num_samples", type=int, default=2, help="Number of samples to inspect per dataset")
     return parser.parse_args()
 
 def save_comparison_image(image_tensor, mask_tensor, dataset_name, sample_idx, 
-                         image_path, conversations, questions, class_names, session_timestamp):
-    """比較画像とメタデータを保存（画面表示なし）- 学習時と同じ処理"""
+                         image_path, conversations, questions, class_names, session_timestamp,
+                         formatted_prompt=None, is_single_encoder=True):
+    """比較画像とメタデータを保存（画面表示なし）- シングルエンコーダー構成対応"""
     try:
         item_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # ミリ秒まで
         base_filename = f"{dataset_name}_{sample_idx}_{item_timestamp}"
@@ -175,9 +177,11 @@ def save_comparison_image(image_tensor, mask_tensor, dataset_name, sample_idx,
             "questions": questions,
             "class_names": class_names,
             "comparison_image": image_filename,
-            "processing_note": "Simple resize: mask resized to match processed image size",
+            "processing_note": "Single-encoder configuration: SAM processes images",
             "image_size": f"{image.size[0]}x{image.size[1]}",
-            "mask_size": f"{mask.shape[1]}x{mask.shape[0]}" if mask is not None else "None"
+            "mask_size": f"{mask.shape[1]}x{mask.shape[0]}" if mask is not None else "None",
+            "formatted_prompt": formatted_prompt,
+            "is_single_encoder": is_single_encoder
         }
         
         metadata_filename = os.path.join(output_dir, f"{base_filename}_metadata.json")
@@ -214,25 +218,32 @@ def main():
     # セッションタイムスタンプの生成
     session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    print("\n🔍 LISA-Llama4 Dataset Integrity Verification")
+    print("\n🔍 LISA-Llama4 Dataset Integrity Verification (Single-Encoder Configuration)")
     print("=" * 60)
     print(f"🚀 検証セッション開始: {session_timestamp}")
     print(f"📁 出力ディレクトリ: verification_output/session_{session_timestamp}/")
+    print(f"🔧 シングルエンコーダー構成: SAM専用画像処理")
     print("=" * 60)
     
     # 重いライブラリを必要時に読み込み
     load_heavy_libraries()
     
-    # 個別データセットクラスを使用した検証
+    # HybridDatasetを使用した検証（シングルエンコーダー構成）
     try:
-        print("📦 データセットクラスを読み込み中...")
-        from utils.sem_seg_dataset import SemSegDataset
-        from utils.refer_seg_dataset import ReferSegDataset
-        from utils.vqa_dataset import VQADataset
-        from utils.reason_seg_dataset import ReasonSegDataset
+        print("📦 HybridDatasetクラスを読み込み中...")
+        from utils.dataset import HybridDataset, setup_seg_token
+        from transformers import AutoProcessor
         
         print("✅ データセットクラス読み込み完了")
-        print(f"📦 個別データセット初期化中...")
+        
+        # Llama4 Processorを読み込み（トークナイザーとして使用）
+        print(f"📦 Llama4 Processor初期化中...")
+        processor = AutoProcessor.from_pretrained(config.LLAMA_MODEL_ID)
+        tokenizer = processor.tokenizer
+        
+        # [SEG]トークンを追加
+        seg_token_idx = setup_seg_token(tokenizer, config.SEG_TOKEN)
+        print(f"✅ Processorとトークナイザーの準備完了")
         
         # データセット設定（config_linux.pyから統一管理）
         print(f"📋 設定情報:")
@@ -241,190 +252,131 @@ def main():
         print(f"   バッチサイズ: {config.BATCH_SIZE_PER_GPU}")
         print(f"   勾配蓄積ステップ: {config.GRADIENT_ACCUMULATION_STEPS}")
         print(f"   Llama4モデル: {config.LLAMA_MODEL_ID}")
+        print(f"   SEGトークンID: {seg_token_idx}")
         
-        dataset_configs = []
-        if "sem_seg" in args.datasets:
-            dataset_configs.append(("sem_seg", SemSegDataset, {
-                "base_image_dir": config.DATASET_BASE_DIR,
-                "tokenizer": None,
-                "samples_per_epoch": getattr(config, 'SAMPLES_PER_EPOCH', 50),
-                "sem_seg_data": config.SEM_SEG_DATA
-            }))
+        # HybridDatasetを初期化
+        print(f"📦 HybridDataset初期化中...")
         
-        if "refer_seg" in args.datasets:
-            dataset_configs.append(("refer_seg", ReferSegDataset, {
-                "base_image_dir": config.DATASET_BASE_DIR,
-                "tokenizer": None,
-                "samples_per_epoch": getattr(config, 'SAMPLES_PER_EPOCH', 50),
-                "refer_seg_data": config.REFER_SEG_DATA
-            }))
+        # デバッグ: 引数を表示
+        print("  デバッグ: HybridDataset初期化引数:")
+        print(f"    base_image_dir: {config.DATASET_BASE_DIR}")
+        print(f"    llama_processor: {type(processor)}")
+        print(f"    samples_per_epoch: {getattr(config, 'SAMPLES_PER_EPOCH', 500)}")
+        print(f"    llama_image_size: {config.LLAMA_IMAGE_SIZE}")
+        print(f"    sam_image_size: {config.SAM_IMAGE_SIZE}")
         
-        if "vqa" in args.datasets:
-            dataset_configs.append(("vqa", VQADataset, {
-                "base_image_dir": config.DATASET_BASE_DIR,
-                "tokenizer": None,
-                "samples_per_epoch": getattr(config, 'SAMPLES_PER_EPOCH', 50),
-                "vqa_data": config.VQA_DATA
-            }))
+        try:
+            hybrid_dataset = HybridDataset(
+                base_image_dir=config.DATASET_BASE_DIR,
+                llama_processor=processor,
+                samples_per_epoch=getattr(config, 'SAMPLES_PER_EPOCH', 500),
+                precision="bf16",
+                llama_image_size=config.LLAMA_IMAGE_SIZE,
+                sam_image_size=config.SAM_IMAGE_SIZE,
+                num_classes_per_sample=3,
+                exclude_val=False,
+                dataset="sem_seg||refer_seg||vqa||reason_seg",
+                sample_rate=[9, 3, 3, 1],
+                sem_seg_data=config.SEM_SEG_DATA,
+                refer_seg_data=config.REFER_SEG_DATA,
+                vqa_data=config.VQA_DATA,
+                reason_seg_data=config.REASON_SEG_DATA,
+                explanatory=0.1  # 追加: 必須引数
+            )
+            print(f"✅ HybridDataset初期化完了 (サンプル数: {len(hybrid_dataset)})")
+        except Exception as e:
+            print(f"❌ HybridDataset初期化エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
-        if "reason_seg" in args.datasets:
-            dataset_configs.append(("reason_seg", ReasonSegDataset, {
-                "base_image_dir": config.DATASET_BASE_DIR,
-                "tokenizer": None,
-                "samples_per_epoch": getattr(config, 'SAMPLES_PER_EPOCH', 50),
-                "reason_seg_data": config.REASON_SEG_DATA
-            }))
+        # HybridDatasetを検証
+        print("\n🔬 HybridDataset検証開始（シングルエンコーダー構成）")
         
-        # 各データセットを初期化して検証
-        print("\n🔬 データセット検証開始")
-        
-        for dataset_name, dataset_class, dataset_kwargs in dataset_configs:
-            print(f"\n===== {dataset_name.upper()} データセット検証 =====")
+        # サンプル検証
+        for i in range(min(args.num_samples, len(hybrid_dataset))):
+            print(f"\n--- HybridDataset Sample {i+1}/{args.num_samples} ---")
             
             try:
-                # データセット初期化
-                dataset = dataset_class(**dataset_kwargs)
-                print(f"✅ {dataset_name} 初期化完了 (サンプル数: {len(dataset)})")
+                # HybridDatasetからサンプル取得
+                sample = hybrid_dataset[i]
+                dataset_name = sample.get('dataset_name', 'unknown')
                 
-                # サンプル検証
-                for i in range(min(args.num_samples, len(dataset))):
-                    print(f"\n--- Sample {i+1}/{args.num_samples} ---")
+                print(f"📂 ソースデータセット: {dataset_name}")
+                
+                # データ構造確認
+                print(f"📦 返却キー: {list(sample.keys())}")
+                
+                # シングルエンコーダー構成の確認
+                if 'sam_pixel_values' in sample:
+                    print(f"✅ SAM画像入力: shape={sample['sam_pixel_values'].shape}")
+                else:
+                    print(f"❌ SAM画像入力が存在しません")
+                
+                if 'pixel_values' in sample:
+                    print(f"⚠️  pixel_valuesが存在します（シングルエンコーダーでは不要）")
+                
+                # テキスト入力の確認
+                if 'input_ids' in sample:
+                    print(f"📝 入力ID: shape={sample['input_ids'].shape}")
                     
-                    try:
-                        sample = dataset[i]
+                    # Llama-4ネイティブフォーマットの確認
+                    if 'formatted_prompt' in sample:
+                        prompt_preview = sample['formatted_prompt'][:200] + "..." if len(sample['formatted_prompt']) > 200 else sample['formatted_prompt']
+                        print(f"💬 フォーマット済みプロンプト: {prompt_preview}")
                         
-                        # データ構造確認
-                        if isinstance(sample, dict):
-                            print(f"📦 辞書形式: {list(sample.keys())}")
-                            
-                            # 会話データ
-                            if 'conversations' in sample:
-                                conversations = sample['conversations']
-                                print(f"💬 会話ターン数: {len(conversations)}")
-                                for j, turn in enumerate(conversations[:2]):
-                                    if isinstance(turn, dict):
-                                        print(f"  Turn {j+1}: {turn.get('from')} -> {turn.get('value', '')[:100]}...")
-                            
-                            # 画像データ
-                            image_tensor = sample.get('image') or sample.get('images')
-                            if image_tensor is not None:
-                                print(f"🖼️ 画像: {image_tensor.shape}, {image_tensor.dtype}")
-                            
-                            # マスクデータ
-                            mask_tensor = sample.get('masks') or sample.get('mask')
-                            if mask_tensor is not None:
-                                if isinstance(mask_tensor, list):
-                                    print(f"🎯 マスク: リスト({len(mask_tensor)}個)")
-                                    if len(mask_tensor) > 0:
-                                        print(f"    最初のマスク: {mask_tensor[0].shape if hasattr(mask_tensor[0], 'shape') else type(mask_tensor[0])}")
-                                else:
-                                    print(f"🎯 マスク: {mask_tensor.shape}, {mask_tensor.dtype}")
-                            
-                            # 可視化
-                            if image_tensor is not None and mask_tensor is not None:
-                                save_comparison_image(
-                                    image_tensor, mask_tensor,
-                                    dataset_name, i,
-                                    image_path=sample.get('image_path', ''),
-                                    conversations=conversations,
-                                    questions=sample.get('questions'),
-                                    class_names=sample.get('sampled_classes'),
-                                    session_timestamp=session_timestamp
-                                )
-                                print(f"📸 {dataset_name} Sample {i+1} - 比較画像を保存しました")
-                        
-                        elif isinstance(sample, (list, tuple)):
-                            print(f"📦 tuple形式: {len(sample)}要素")
-                            for j, element in enumerate(sample):
-                                if isinstance(element, torch.Tensor):
-                                    print(f"  [{j}]: Tensor {element.shape}")
-                                elif isinstance(element, str):
-                                    print(f"  [{j}]: String ('{element[:50]}...')")
-                                elif isinstance(element, list):
-                                    print(f"  [{j}]: List({len(element)}個)")
-                                elif isinstance(element, tuple):
-                                    print(f"  [{j}]: tuple")
-                                else:
-                                    print(f"  [{j}]: {type(element)}")
-                            
-                            # 会話データの確認（タプル形式の場合）
-                            conversation_element = None
-                            if len(sample) > 3 and isinstance(sample[3], list):
-                                conversation_element = sample[3]
-                            
-                            if conversation_element is not None:
-                                print(f"💬 会話ターン数: {len(conversation_element)}")
-                                for j, turn in enumerate(conversation_element[:2]):
-                                    if isinstance(turn, str):
-                                        print(f"  Turn {j+1}: {turn[:100]}...")
-                                    else:
-                                        print(f"  Turn {j+1}: {type(turn)}")
-                            
-                            # 可視化と保存（タプル形式）
-                            try:
-                                # 要素の抽出
-                                image_path = sample[0] if len(sample) > 0 and isinstance(sample[0], str) else ""
-                                sam_image = sample[1] if len(sample) > 1 and isinstance(sample[1], torch.Tensor) else None
-                                gemma_image = sample[2] if len(sample) > 2 and isinstance(sample[2], torch.Tensor) else None
-                                conversations = sample[3] if len(sample) > 3 and isinstance(sample[3], list) else None
-                                masks = sample[4] if len(sample) > 4 and isinstance(sample[4], torch.Tensor) else None
-                                questions = sample[7] if len(sample) > 7 and isinstance(sample[7], list) else None
-                                sampled_classes = sample[8] if len(sample) > 8 and isinstance(sample[8], list) else None
-                                
-                                # SAM画像（要素1）とマスク（要素4）で可視化・保存
-                                if sam_image is not None and masks is not None:
-                                    # マスクが空でないかチェック
-                                    if masks.numel() > 0:  # マスクにデータがある場合
-                                        # 比較画像の保存
-                                        save_comparison_image(
-                                            sam_image, masks, 
-                                            dataset_name, i,
-                                            image_path=image_path,
-                                            conversations=conversations,
-                                            questions=questions,
-                                            class_names=sampled_classes,
-                                            session_timestamp=session_timestamp
-                                        )
-                                        print(f"📸 {dataset_name} Sample {i+1} - 比較画像を保存しました")
-                                    else:
-                                        # マスクが空の場合（VQAなど）
-                                        save_comparison_image(
-                                            sam_image, None, 
-                                            dataset_name, i,
-                                            image_path=image_path,
-                                            conversations=conversations,
-                                            questions=questions,
-                                            class_names=sampled_classes,
-                                            session_timestamp=session_timestamp
-                                        )
-                                        print(f"📸 {dataset_name} Sample {i+1} - マスクが空のため、画像のみ保存（VQAタスクなど）")
-                                elif sam_image is not None:
-                                    # マスクがない場合でも画像は保存
-                                    save_comparison_image(
-                                        sam_image, None, 
-                                        dataset_name, i,
-                                        image_path=image_path,
-                                        conversations=conversations,
-                                        questions=questions,
-                                        class_names=sampled_classes,
-                                        session_timestamp=session_timestamp
-                                    )
-                                    print(f"📸 {dataset_name} Sample {i+1} - マスクデータがないため、画像のみ保存")
-                                else:
-                                    print("⚠️ 可視化用データが不足")
-                                    
-                            except Exception as viz_e:
-                                print(f"❌ 可視化・保存エラー: {viz_e}")
-                        
-                        print(f"  ✅ サンプル {i+1} 検証完了")
-                        
-                    except Exception as e:
-                        print(f"  ❌ サンプル {i+1} 検証失敗: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        # <|image|>トークンの確認
+                        if '<|image|>' in sample['formatted_prompt']:
+                            print(f"✅ Llama-4ネイティブ<|image|>トークン検出")
+                        else:
+                            print(f"⚠️ <|image|>トークンが見つかりません")
+                
+                # マスクデータの確認
+                if 'ground_truth_mask' in sample and sample['ground_truth_mask'] is not None:
+                    mask = sample['ground_truth_mask']
+                    print(f"🎯 マスク: shape={mask.shape}")
+                    
+                    # 元画像サイズの確認
+                    if 'original_size' in sample:
+                        orig_h, orig_w = sample['original_size']
+                        print(f"📷 元画像サイズ: {orig_w}x{orig_h}")
+                else:
+                    print(f"ℹ️  マスクなし（VQAタスクなど）")
+                
+                # SEGトークンマスクの確認
+                if 'seg_token_mask' in sample:
+                    seg_positions = torch.nonzero(sample['seg_token_mask']).squeeze()
+                    if seg_positions.numel() > 0:
+                        print(f"🎯 [SEG]トークン位置: {seg_positions.tolist()}")
+                    else:
+                        print(f"ℹ️  [SEG]トークンなし")
+                
+                # 可視化
+                if 'sam_pixel_values' in sample:
+                    image_path = sample.get('image_path', '')
+                    conversations = []
+                    if 'text_prompt' in sample:
+                        conversations = [{"from": "human", "value": sample['text_prompt']}]
+                    
+                    save_comparison_image(
+                        sample['sam_pixel_values'],
+                        sample.get('ground_truth_mask'),
+                        dataset_name,
+                        i,
+                        image_path=image_path,
+                        conversations=conversations,
+                        questions=sample.get('questions'),
+                        class_names=sample.get('sampled_classes'),
+                        session_timestamp=session_timestamp,
+                        formatted_prompt=sample.get('formatted_prompt'),
+                        is_single_encoder=True
+                    )
+                    print(f"📸 比較画像を保存しました")
+                
+                print(f"  ✅ サンプル {i+1} 検証完了")
                 
             except Exception as e:
-                print(f"❌ {dataset_name} データセット初期化失敗: {e}")
+                print(f"  ❌ サンプル {i+1} 検証失敗: {e}")
                 import traceback
                 traceback.print_exc()
         
@@ -437,7 +389,8 @@ def main():
                 "end_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
                 "datasets_verified": args.datasets,
                 "samples_per_dataset": args.num_samples,
-                "config_used": os.path.basename(config_path) if 'config_path' in locals() else "config_linux.py"
+                "config_used": "config_linux.py",
+                "single_encoder_mode": True
             },
             "verification_results": "See individual metadata files for detailed results"
         }
@@ -447,7 +400,7 @@ def main():
         with open(summary_file, 'w', encoding='utf-8') as f:
             json.dump(session_summary, f, ensure_ascii=False, indent=2)
         
-        print(f"\n🎉 第1節検証完了: データセット構築と完全性の検証")
+        print(f"\n🎉 検証完了: データセット構築と完全性の検証（シングルエンコーダー構成）")
         print(f"📁 保存された比較画像とメタデータ: verification_output/session_{session_timestamp}/")
         print(f"📋 セッションサマリー: {summary_file}")
         print(f"🕐 セッション終了時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -458,4 +411,4 @@ def main():
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main() 
+    main()

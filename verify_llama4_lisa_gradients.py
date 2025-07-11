@@ -38,6 +38,8 @@ sys.path.insert(0, '.')
 # Import LISA components
 from model.llama4_lisa import LisaLlama4ForCausalLM, LisaLlama4Config
 import config_linux
+from utils.data_processing import preprocess_sam_image
+from utils.dataset import build_correct_labels_for_llama4
 
 def print_header(title: str):
     """Print formatted header"""
@@ -125,10 +127,11 @@ def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], v
         
         # 実際のLISA統合モデルの完全フォワードパス
         # SAMを有効にしてセグメンテーション機能も検証
+        # シングルエンコーダー構成: pixel_valuesを削除
         model_outputs = model(
             input_ids=inputs['input_ids'],
             attention_mask=inputs.get('attention_mask'),
-            pixel_values=inputs.get('pixel_values'),
+            # pixel_values=inputs.get('pixel_values'),  # シングルエンコーダーでは削除
             labels=inputs['input_ids'],  # 言語モデリング用
             generate_mask=True  # SAM機能を有効化
         )
@@ -181,12 +184,15 @@ def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], v
             else:
                 raise ValueError("損失が見つかりません")
         
-        # SAM機能確認
-        if isinstance(model_outputs, dict) and 'predicted_masks' in model_outputs:
-            masks = model_outputs['predicted_masks']
+        # SAM機能確認（シングルエンコーダー構成でのマスク出力確認）
+        if isinstance(model_outputs, dict) and 'pred_masks' in model_outputs:
+            masks = model_outputs['pred_masks']
             if masks is not None:
                 if verbose:
                     logger.info(f"✅ SAMマスク生成成功: {masks.shape if hasattr(masks, 'shape') else type(masks)}")
+                    # シングルエンコーダー構成では、マスクは元の画像サイズにリサイズ済み
+                    if hasattr(masks, 'shape') and len(masks.shape) >= 2:
+                        logger.info(f"  マスクサイズ: {masks.shape[-2:]} (元画像サイズ)")
             else:
                 if verbose:
                     logger.info("ℹ️ SAMマスク未生成（SEGトークンなしまたはSAM無効）")
@@ -263,36 +269,74 @@ def main():
         logger.info(f"テスト画像: {test_image.size}")
         logger.info(f"テストプロンプト: {test_prompt}")
         
-        # 公式推奨方法：学習時も推論時と同じインターフェースを使用
-        # メッセージ形式で準備（HuggingFace公式ドキュメント準拠）
+        # シングルエンコーダー構成用：学習時は直接データを準備
+        # HybridDatasetの実装を参考にして正しい入力データを作成
+        logger.info("シングルエンコーダー構成で学習用データ準備中...")
+        
+        # 1. SAM用画像処理
+        sam_image_size = config_linux.SAM_IMAGE_SIZE  # 1024
+        sam_pixel_values = preprocess_sam_image(test_image, sam_image_size)
+        if sam_pixel_values.dim() == 4:
+            sam_pixel_values = sam_pixel_values.squeeze(0)
+        logger.info(f"SAM画像入力生成: shape={sam_pixel_values.shape}")
+        
+        # 2. Llama-4ネイティブフォーマットでテキスト処理
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": test_image},
+                    {"type": "image"},  # 画像プレースホルダー
                     {"type": "text", "text": test_prompt}
                 ]
             }
         ]
         
-        # Llama4 Processorで直接処理（成功した単独モデルと同じ方法）
-        inputs = model.llama_processor.apply_chat_template(
+        # apply_chat_templateでLlama-4形式のテキストを生成
+        # これにより<|image|>トークンが自動的に挿入される
+        chat_text = model.llama_processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt"
+            tokenize=False  # テキストとして取得
         )
         
-        # BatchFeatureを辞書に変換（既存の修正を活用）
-        if hasattr(inputs, 'keys') and hasattr(inputs, '__getitem__'):
-            result_dict = {}
-            for key in inputs.keys():
-                result_dict[key] = inputs[key]
-            inputs = result_dict
-            logger.info(f"✅ BatchFeature→dict変換完了: {list(inputs.keys())}")
+        # 3. テキストのみをトークン化（画像処理はSAMが行う）
+        text_inputs = model.llama_processor.tokenizer(
+            chat_text,
+            return_tensors="pt",
+            padding=False,
+            truncation=True,
+            max_length=config_linux.MODEL_MAX_LENGTH
+        )
         
-        # 最初のGPUに移動
+        input_ids = text_inputs['input_ids'].squeeze(0)
+        attention_mask = text_inputs['attention_mask'].squeeze(0)
+        
+        # 4. ラベルを正しく構築
+        labels = build_correct_labels_for_llama4(input_ids, model.llama_processor.tokenizer)
+        
+        # 5. [SEG]トークンマスクの作成
+        seg_token_idx = model.seg_token_idx
+        seg_token_mask = (input_ids == seg_token_idx)
+        
+        # 6. 入力データの準備
+        inputs = {
+            'input_ids': input_ids.unsqueeze(0),  # batch次元を追加
+            'attention_mask': attention_mask.unsqueeze(0),
+            'sam_pixel_values': sam_pixel_values.unsqueeze(0),
+            'labels': labels.unsqueeze(0),
+            'seg_token_mask': seg_token_mask.unsqueeze(0)
+        }
+        
+        logger.info(f"✅ 学習用データ準備完了: {list(inputs.keys())}")
+        
+        # SAM画像入力の確認
+        if 'sam_pixel_values' in inputs:
+            logger.info(f"✅ SAM画像入力: shape={inputs['sam_pixel_values'].shape}")
+        
+        if 'pixel_values' in inputs:
+            logger.warning("⚠️ pixel_valuesが存在します（シングルエンコーダーでは不要）")
+        
+        # GPU移動
         first_device = next(iter(model.hf_device_map.values())) if hasattr(model, 'hf_device_map') else next(model.parameters()).device
         inputs = {k: v.to(first_device) if hasattr(v, 'to') else v for k, v in inputs.items()}
         logger.info(f"入力準備完了: {list(inputs.keys())}, device: {first_device}")
