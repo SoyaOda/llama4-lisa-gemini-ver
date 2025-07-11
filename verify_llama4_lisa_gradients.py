@@ -111,9 +111,10 @@ def analyze_gradients(model: nn.Module) -> Dict[str, Any]:
     
     return gradient_info
 
-def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], verbose: bool = True) -> torch.Tensor:
-    """Verify loss calculation with detailed debugging"""
+def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], verbose: bool = True) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """Verify loss calculation with detailed debugging and return loss details"""
     model.train()
+    loss_details = {}
     
     if verbose:
         logger.info("=== 損失計算検証 ===")
@@ -148,6 +149,18 @@ def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], v
         
         # CompositeLoss統合による損失取得
         if isinstance(model_outputs, dict):
+            # 損失の詳細表示と記録
+            if 'losses' in model_outputs and isinstance(model_outputs['losses'], dict):
+                if verbose:
+                    logger.info("📊 損失の詳細内訳:")
+                    for loss_name, loss_value in model_outputs['losses'].items():
+                        if loss_value is not None:
+                            loss_details[loss_name] = loss_value.item()
+                            logger.info(f"  - {loss_name}: {loss_value.item():.6f}")
+                        else:
+                            loss_details[loss_name] = None
+                            logger.info(f"  - {loss_name}: N/A")
+            
             # CompositeLossからの統一損失
             if 'text_loss' in model_outputs:
                 loss = model_outputs['text_loss']
@@ -204,11 +217,14 @@ def verify_loss_calculation(model: nn.Module, inputs: Dict[str, torch.Tensor], v
                     logger.info("ℹ️ SAMマスク未生成（SEGトークンなしまたはSAM無効）")
         
         if verbose:
-            logger.info(f"✅ 損失値: {loss.item():.6f}")
+            logger.info(f"✅ 合計損失値: {loss.item():.6f}")
             logger.info(f"損失のデバイス: {loss.device}")
             logger.info(f"損失のrequires_grad: {loss.requires_grad}")
         
-        return loss
+        # 合計損失も記録
+        loss_details['total_loss'] = loss.item()
+        
+        return loss, loss_details
         
     except Exception as e:
         logger.error(f"❌ 損失計算でエラー: {e}")
@@ -226,6 +242,9 @@ def main():
     logger.info(f"✅ CUDA利用可能: {torch.cuda.device_count()}個のGPU")
     for i in range(torch.cuda.device_count()):
         logger.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+    
+    # 損失の詳細を保存する変数
+    loss_details = {}
     
     try:
         # Disable dynamic compilation for distributed setup
@@ -318,7 +337,8 @@ def main():
         )
         
         # アシスタント応答を追加（HybridDataset形式）
-        if "[SEG]" in clean_prompt:
+        # セグメンテーション要求を判定（"segment"が含まれるかチェック）
+        if "segment" in clean_prompt.lower():
             # セグメンテーションタスクの場合
             formatted_prompt += " Sure, [SEG].</s>"
         else:
@@ -352,8 +372,8 @@ def main():
         
         # 6. ダミーのグラウンドトゥルースマスク（テスト用）
         ground_truth_mask = torch.zeros((1, test_image.size[1], test_image.size[0]), dtype=torch.float32)
-        if "[SEG]" in clean_prompt:
-            # セグメンテーションタスクの場合、ダミーマスクを生成
+        if "segment" in clean_prompt.lower():
+            # セグメンテーションタスクの場合、ダミーマスクを生成（左上1/4を赤い領域と仮定）
             ground_truth_mask[0, :test_image.size[1]//2, :test_image.size[0]//2] = 1.0
         
         # 7. 入力データの準備（HybridDataset互換形式）
@@ -365,7 +385,7 @@ def main():
             'seg_token_mask': seg_token_mask.unsqueeze(0),
             'ground_truth_masks': ground_truth_mask.unsqueeze(0),  # batch次元を追加
             'original_sizes': [(test_image.size[1], test_image.size[0])],  # (H, W)形式
-            'has_mask': torch.tensor([1 if "[SEG]" in clean_prompt else 0]),
+            'has_mask': torch.tensor([1 if "segment" in clean_prompt.lower() else 0]),
             'dataset_name': dataset_name
         }
         
@@ -413,7 +433,7 @@ def main():
         # Step 5: Forward pass and loss calculation
         print_header("ステップ5: 順伝播と損失計算")
         
-        loss = verify_loss_calculation(model, inputs, verbose=True)
+        loss, loss_details = verify_loss_calculation(model, inputs, verbose=True)
         logger.info(f"✅ 損失計算成功: {loss.item():.6f}")
         
         # Step 6: Backward pass
@@ -472,7 +492,15 @@ def main():
         logger.info(f"LoRA適用: ✅")
         logger.info(f"データ準備: ✅")
         logger.info(f"順伝播: ✅")
-        logger.info(f"損失計算: ✅ (損失値: {loss.item():.6f})")
+        logger.info(f"損失計算: ✅ (合計損失: {loss.item():.6f})")
+        
+        # 損失の詳細を表示
+        if loss_details:
+            logger.info(f"損失内訳:")
+            for loss_name, loss_value in loss_details.items():
+                if loss_name != 'total_loss' and loss_value is not None:
+                    logger.info(f"  - {loss_name}: {loss_value:.6f}")
+        
         logger.info(f"逆伝播: ✅")
         logger.info(f"勾配フロー: {'✅' if success else '❌'}")
         
