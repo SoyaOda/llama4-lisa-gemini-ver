@@ -27,7 +27,6 @@ from .refer import REFER
 from .refer_seg_dataset import ReferSegDataset
 from .sem_seg_dataset import SemSegDataset
 from .vqa_dataset import VQADataset
-from .transforms import ResizeLongestSide
 
 def get_config():
     """実行時の設定ファイルを動的に取得"""
@@ -76,67 +75,51 @@ def setup_seg_token(tokenizer, seg_token="[SEG]"):
     print(f"  - [SEG]トークンID: {seg_token_idx}")
     return seg_token_idx
 
-def setup_image_token(tokenizer, image_token="<image>"):
-    """
-    シングルエンコーダー構成用の<image>トークンセットアップ
-    LLMに画像の存在を示すシンボルとして機能
-    """
-    # トークナイザの既存の特殊トークンを確認
-    existing_special_tokens = tokenizer.special_tokens_map
-    additional_special_tokens = tokenizer.additional_special_tokens if hasattr(tokenizer, 'additional_special_tokens') else []
-    
-    # <image>トークンが既に存在するか確認
-    if image_token in tokenizer.get_vocab():
-        image_token_idx = tokenizer(image_token, add_special_tokens=False).input_ids[0]
-        print(f"<image>トークンは既に存在:")
-        print(f"  - <image>トークンID: {image_token_idx}")
-    else:
-        # <image>トークンを追加
-        num_added_tokens = tokenizer.add_tokens(image_token, special_tokens=True)
-        image_token_idx = tokenizer(image_token, add_special_tokens=False).input_ids[0]
-        print(f"<image>トークンセットアップ完了:")
-        print(f"  - 追加されたトークン数: {num_added_tokens}")
-        print(f"  - <image>トークンID: {image_token_idx}")
-    
-    return image_token_idx
-
 def preprocess_sam_image(image: Image.Image, target_size: Optional[int] = None) -> torch.Tensor:
     """
-    SAM用画像前処理：Original-LISA準拠の実装
-    ResizeLongestSideを使用してリサイズ、その後正規化とパディング
+    SAM用画像前処理：1024x1024にリサイズ・パディング・正規化
     """
     if target_size is None:
         target_size = getattr(config, 'SAM_IMAGE_SIZE', 1024)
-    
-    # Convert to RGB if necessary
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    
-    # numpy配列に変換
-    image_np = np.array(image)
-    
-    # ResizeLongestSideを使用してリサイズ
-    transform = ResizeLongestSide(target_size)
-    resized_image = transform.apply_image(image_np)
-    
-    # CHW形式に変換
-    image_tensor = torch.from_numpy(resized_image).permute(2, 0, 1).float()
-    
-    # SAM準拠の正規化（pixel_mean/pixel_std）
-    pixel_mean = torch.Tensor([123.675, 116.28, 103.53]).view(3, 1, 1)
-    pixel_std = torch.Tensor([58.395, 57.12, 57.375]).view(3, 1, 1)
-    image_tensor = (image_tensor - pixel_mean) / pixel_std
-    
-    # パディング（右下にゼロパディング）
-    h, w = image_tensor.shape[-2:]
-    padh = target_size - h
-    padw = target_size - w
-    image_tensor = F.pad(image_tensor, (0, padw, 0, padh))
-    
-    return image_tensor
+    w, h = image.size
+    if max(w, h) != target_size:
+        if w > h:
+            new_w, new_h = target_size, int(h * target_size / w)
+        else:
+            new_w, new_h = int(w * target_size / h), target_size
+        image = image.resize((new_w, new_h), Image.LANCZOS)
+    w, h = image.size
+    pad_w = (target_size - w) // 2
+    pad_h = (target_size - h) // 2
+    padded_image = Image.new('RGB', (target_size, target_size), (0, 0, 0))
+    padded_image.paste(image, (pad_w, pad_h))
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[123.675/255, 116.28/255, 103.53/255],
+            std=[58.395/255, 57.12/255, 57.375/255]
+        )
+    ])
+    return transform(padded_image)
 
-# シングルエンコーダー構成のため、Llama用画像前処理関数は削除
-# def preprocess_llama_image は削除されました
+def preprocess_llama_image(image: Image.Image, processor: AutoProcessor, target_size: Optional[int] = None) -> torch.Tensor:
+    """
+    Llama用画像前処理：448x448にリサイズ・正規化
+    """
+    if target_size is None:
+        target_size = getattr(config, 'LLAMA_IMAGE_SIZE', 448)
+    try:
+        processed = processor(images=image, return_tensors="pt")
+        image_tensor = processed['pixel_values'].squeeze(0)
+        return image_tensor
+    except Exception as e:
+        print(f"Llama画像前処理エラー: {e}")
+        image_resized = image.resize((target_size, target_size), Image.LANCZOS)
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
+        return transform(image_resized)
 
 def build_correct_labels_for_llama4(input_ids: torch.Tensor, tokenizer) -> torch.Tensor:
     """
@@ -148,39 +131,53 @@ def build_correct_labels_for_llama4(input_ids: torch.Tensor, tokenizer) -> torch
     # これにより有効なラベルが存在し、損失が正常に計算される
     return labels
 
-def preprocess_mask(mask: np.ndarray, original_size: Tuple[int, int] = None) -> torch.Tensor:
+def preprocess_mask(mask: np.ndarray, target_size: Optional[int] = None) -> torch.Tensor:
     """
-    マスクの前処理（Original-LISA準拠）
-    注意: データセット段階ではマスクは元のサイズのまま保持
-    
-    Args:
-        mask: 入力マスク (numpy array)
-        original_size: 元画像サイズ (H, W) - 現在は使用しない
+    マスクの前処理
     """
-    
+    if target_size is None:
+        target_size = getattr(config, 'SAM_IMAGE_SIZE', 1024)
     if isinstance(mask, torch.Tensor):
         mask = mask.cpu().numpy()
-    
-    # マスクを2Dに変換
+    if mask.size == 0:
+        raise ValueError("空のマスクです")
+    if mask.ndim < 2:
+        raise ValueError(f"マスクの次元が不正です: {mask.ndim}D (最低2D必要)")
     if mask.ndim == 2:
+        h, w = mask.shape
         mask_2d = mask
     elif mask.ndim == 3:
         if mask.shape[0] == 1:
             mask_2d = mask[0]
+            h, w = mask_2d.shape
         elif mask.shape[-1] == 1:
             mask_2d = mask[:, :, 0]
+            h, w = mask_2d.shape
+        elif mask.shape[0] == 3 or mask.shape[-1] == 3:
+            if mask.shape[0] == 3:
+                mask_2d = mask[0]
+                h, w = mask_2d.shape
+            else:
+                mask_2d = mask[:, :, 0]
+                h, w = mask_2d.shape
         else:
-            # 複数チャンネルの場合、最初のチャンネルを使用
-            mask_2d = mask[0] if mask.shape[0] <= mask.shape[-1] else mask[:, :, 0]
+            mask_2d = mask.reshape(-1, mask.shape[-2], mask.shape[-1])[0]
+            h, w = mask_2d.shape
     else:
         raise ValueError(f"サポートされていないマスクの次元: {mask.ndim}D")
-    
-    # Original-LISA準拠: マスクは元のサイズのまま保持
-    # モデル内でSAMが適切にリサイズとパディングを行う
-    # ここでは単にテンソルに変換するのみ
-    
-    # 3D tensorに変換 (1, H, W)
-    return torch.from_numpy(mask_2d[None, ...]).float()
+    if h == 0 or w == 0:
+        raise ValueError(f"無効なマスクサイズ: {h}x{w}")
+    if (h, w) != (target_size, target_size):
+        try:
+            mask_uint8 = mask_2d.astype(np.uint8)
+            mask_pil = Image.fromarray(mask_uint8, mode='L')
+            mask_resized_pil = mask_pil.resize((target_size, target_size), Image.NEAREST)
+            mask_2d = np.array(mask_resized_pil)
+        except Exception as e:
+            raise ValueError(f"マスクリサイズ失敗 (元サイズ: {h}x{w}, target: {target_size}x{target_size}): {e}")
+    if mask_2d.ndim == 2:
+        mask_2d = mask_2d[None, ...]
+    return torch.from_numpy(mask_2d).float()
 
 class HybridDataset(torch.utils.data.Dataset):
     """
@@ -227,9 +224,6 @@ class HybridDataset(torch.utils.data.Dataset):
         if self.llama_processor and self.llama_processor.tokenizer:
             self.seg_token = getattr(config, 'SEG_TOKEN', '[SEG]')
             self.seg_token_idx = setup_seg_token(self.llama_processor.tokenizer, self.seg_token)
-            # シングルエンコーダー構成: Llama4のネイティブマルチモーダルでは<image>トークンは不要
-            # self.image_token = DEFAULT_IMAGE_TOKEN
-            # self.image_token_idx = setup_image_token(self.llama_processor.tokenizer, self.image_token)
             self.max_length = getattr(config, 'MODEL_MAX_LENGTH', 2048)
         else:
             raise ValueError("llama_processor は必須です")
@@ -340,7 +334,7 @@ class HybridDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> Dict[str, Any]:
         """
         統合データセットからサンプルを取得
-        シングルエンコーダー構成：SAM専用画像処理とテキストフォーマット
+        仕様書第3章.2準拠のデュアルストリーム・データパイプライン
         """
         dataset_idx = np.random.choice(len(self.all_datasets), p=self.sample_rate)
         selected_dataset = self.all_datasets[dataset_idx]
@@ -392,10 +386,8 @@ class HybridDataset(torch.utils.data.Dataset):
                     image_pil = Image.fromarray(image_data)
                 else:
                     raise ValueError(f"サポートされていない画像形式: {type(image_data)}")
-            # シングルエンコーダー構成：SAM専用の画像処理
+            image_llama = preprocess_llama_image(image_pil, self.llama_processor, self.llama_image_size)
             image_sam = preprocess_sam_image(image_pil, self.sam_image_size)
-            # 元画像サイズを記録
-            original_size = (image_pil.height, image_pil.width)
             resize = None
             questions = None
             sampled_classes = None
@@ -406,7 +398,6 @@ class HybridDataset(torch.utils.data.Dataset):
             text_prompt += f" {self.seg_token}"
 
         if len(sample) == 9:
-            # image_samはSAM用の画像データ（元画像またはテンソル）
             if isinstance(image_sam, torch.Tensor):
                 if image_sam.dim() == 3:
                     image_np = image_sam.permute(1, 2, 0).cpu().numpy()
@@ -429,44 +420,39 @@ class HybridDataset(torch.utils.data.Dataset):
                     image_pil = image_sam
                 else:
                     raise ValueError(f"サポートされていない画像形式: {type(image_sam)}")
-            
-            # SAM用画像処理を実行（Original-LISA準拠）
-            image_sam = preprocess_sam_image(image_pil, self.sam_image_size)
-            # 元画像サイズを記録（マスク処理用）
-            original_size = (image_pil.height, image_pil.width)
         else:
-            # len(sample) == 5の場合は既に処理済み
-            original_size = None
+            pass
 
-        # シングルエンコーダー構成：テキストのみの処理
-        # Llama4のネイティブマルチモーダルでは<image>トークンは不要
-        # 画像はpixel_valuesとして別途処理される
-        clean_prompt = text_prompt.replace('<image>\n', '').replace('<image>', '').strip()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_pil},
+                    {"type": "text", "text": text_prompt}
+                ]
+            }
+        ]
         
-        # USER:プレフィックスを追加（<image>なし）
-        formatted_prompt = f"USER: {clean_prompt}"
-        
-        # テキストのみの処理（画像はLlama4に渡さない）
         try:
-            # tokenize only text without images
-            text_inputs = self.llama_processor.tokenizer(
-                formatted_prompt,
-                return_tensors="pt",
-                padding=False,
-                truncation=True,
-                max_length=self.max_length
+            llama_processed = self.llama_processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt"
             )
-            input_ids = text_inputs['input_ids'].squeeze(0)
-            attention_mask = text_inputs['attention_mask'].squeeze(0)
-            
-            # SAM用画像処理は既に完了
-            # image_sam = preprocess_sam_image(image_pil, self.sam_image_size) は上で実行済み
+            input_ids = llama_processed['input_ids'].squeeze(0)
+            attention_mask = llama_processed['attention_mask'].squeeze(0)
+            pixel_values = llama_processed['pixel_values'].squeeze(0)
+            image_llama = pixel_values
+            image_sam = preprocess_sam_image(image_pil, self.sam_image_size)
         except Exception as e:
-            print(f"❌ テキスト処理エラー: {e}")
-            print(f"   テキスト: {formatted_prompt[:100]}...")
-            raise RuntimeError(f"テキスト処理に失敗: {e}")
+            print(f"❌ Llama4マルチモーダル処理エラー: {e}")
+            print(f"   テキスト: {text_prompt[:100]}...")
+            raise RuntimeError(f"Llama4マルチモーダル処理に失敗: {e}")
 
-        # シングルエンコーダー構成のため、image_llamaの処理は削除
+        if image_llama.dim() == 4:
+            image_llama = image_llama.squeeze(0)
         if image_sam.dim() == 4:
             image_sam = image_sam.squeeze(0)
 
@@ -475,45 +461,41 @@ class HybridDataset(torch.utils.data.Dataset):
 
         has_mask = masks is not None
         if has_mask:
-            # preprocess_mask関数を使用（Original-LISA準拠）
-            try:
-                ground_truth_mask = preprocess_mask(masks, original_size)
-            except Exception as e:
-                print(f"⚠️ マスク前処理エラー: {e}")
-                # フォールバック：単純なリサイズ
-                if isinstance(masks, torch.Tensor):
-                    if masks.dim() == 2:
-                        ground_truth_mask = masks.unsqueeze(0)
-                    elif masks.dim() == 3:
-                        ground_truth_mask = masks[0:1]
-                    else:
-                        ground_truth_mask = masks
+            if isinstance(masks, torch.Tensor):
+                if masks.dim() == 2:
+                    ground_truth_mask = masks.unsqueeze(0)
+                elif masks.dim() == 3:
+                    ground_truth_mask = masks[0:1]
                 else:
-                    if isinstance(masks, np.ndarray):
-                        ground_truth_mask = torch.from_numpy(masks)
-                        if ground_truth_mask.dim() == 2:
-                            ground_truth_mask = ground_truth_mask.unsqueeze(0)
-                    else:
-                        ground_truth_mask = torch.zeros(1, self.sam_image_size, self.sam_image_size)
-                        has_mask = False
-                
-                # Original-LISA準拠：マスクは元のサイズのまま保持
+                    ground_truth_mask = masks
+            else:
+                if isinstance(masks, np.ndarray):
+                    ground_truth_mask = torch.from_numpy(masks)
+                    if ground_truth_mask.dim() == 2:
+                        ground_truth_mask = ground_truth_mask.unsqueeze(0)
+                else:
+                    ground_truth_mask = torch.zeros(1, self.sam_image_size, self.sam_image_size)
+                    has_mask = False
+            if ground_truth_mask.size(-1) != self.sam_image_size or ground_truth_mask.size(-2) != self.sam_image_size:
+                ground_truth_mask = F.interpolate(
+                    ground_truth_mask.unsqueeze(0).float(),
+                    size=(self.sam_image_size, self.sam_image_size),
+                    mode='nearest'
+                ).squeeze(0)
         else:
-            ground_truth_mask = None
+            ground_truth_mask = torch.zeros(1, self.sam_image_size, self.sam_image_size)
 
         return {
             'input_ids': input_ids,
             'labels': labels,
             'attention_mask': attention_mask,
-            'sam_pixel_values': image_sam,  # シングルエンコーダー構成：SAM専用
-            # 'images_for_llama' は削除（Llama4に画像を渡さない）
+            'images_for_sam': image_sam,
+            'images_for_llama': image_llama,
             'ground_truth_mask': ground_truth_mask if has_mask else None,
             'has_mask': has_mask,
             'seg_token_mask': seg_token_mask,
             'image_path': image_path if 'image_path' in locals() else None,
             'text_prompt': text_prompt,
-            'formatted_prompt': formatted_prompt,  # デバッグ用に追加
-            'original_size': original_size,  # 元画像サイズ（デバッグ用）
             'resize': resize if 'resize' in locals() else None,
             'questions': questions if 'questions' in locals() else None,
             'sampled_classes': sampled_classes if 'sampled_classes' in locals() else None,
@@ -521,8 +503,8 @@ class HybridDataset(torch.utils.data.Dataset):
 
 def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     """
-    シングルエンコーダー構成対応のカスタムcollate関数
-    SAM専用パイプラインに適応
+    仕様書第3章.3 バッチの結合 (collate_fn)
+    デュアルストリーム対応のカスタムcollate関数
     
     最大シーケンス長は設定ファイルのMODEL_MAX_LENGTHを自動的に使用:
     - config_small_test.py が利用可能な場合: 512 (メモリ効率優先)
@@ -531,8 +513,8 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     """
     config = get_config()
     sam_image_size = getattr(config, 'SAM_IMAGE_SIZE', 1024)
-    # シングルエンコーダー構成: SAM画像のみ
-    sam_pixel_values = []
+    images_for_llama = []
+    images_for_sam = []
     input_ids = []
     attention_mask_list = []
     labels = []
@@ -541,15 +523,13 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     has_masks = []
     image_paths = []
     text_prompts = []
-    formatted_prompts = []
-    original_sizes = []
     resize_list = []
     questions_list = []
     sampled_classes_list = []
     
     for item in batch:
-        # シングルエンコーダー構成: sam_pixel_valuesのみを収集
-        sam_pixel_values.append(item["sam_pixel_values"])
+        images_for_llama.append(item["images_for_llama"])
+        images_for_sam.append(item["images_for_sam"])
         input_ids.append(item["input_ids"])
         attention_mask_list.append(item["attention_mask"])
         label = item["labels"]
@@ -568,14 +548,12 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
         has_masks.append(item.get("has_mask", False))
         image_paths.append(item.get("image_path"))
         text_prompts.append(item.get("text_prompt"))
-        formatted_prompts.append(item.get("formatted_prompt"))
-        original_sizes.append(item.get("original_size"))
         resize_list.append(item.get("resize"))
         questions_list.append(item.get("questions"))
         sampled_classes_list.append(item.get("sampled_classes"))
     
-    # シングルエンコーダー構成: SAM画像のみスタック
-    sam_pixel_values = torch.stack(sam_pixel_values)
+    images_for_llama = torch.stack(images_for_llama)
+    images_for_sam = torch.stack(images_for_sam)
     max_length = max(ids.size(0) for ids in input_ids)
     def pad_sequence(sequences, max_len, pad_value=0):
         padded = []
@@ -591,8 +569,10 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     attention_mask_padded = pad_sequence(attention_mask_list, max_length, pad_value=0)
     labels_padded = pad_sequence(labels, max_length, pad_value=-100)
     seg_token_masks_padded = pad_sequence(seg_token_masks, max_length, pad_value=False)
-    # Original-LISA準拠: マスクは元のサイズのまま（スタックしない）
-    # モデル内でバッチ処理される
+    if ground_truth_masks:
+        ground_truth_masks_stacked = torch.stack(ground_truth_masks)
+    else:
+        ground_truth_masks_stacked = None
     label_list = []
     for has_mask in has_masks:
         if has_mask:
@@ -600,25 +580,23 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
         else:
             label_list.append(None)
     return {
-        # シングルエンコーダー構成: sam_pixel_valuesのみ返す
-        "sam_pixel_values": sam_pixel_values,           # (B, 3, 1024, 1024)
+        "images_for_llama": images_for_llama,           # (B, 3, 448, 448)
+        "images_for_sam": images_for_sam,               # (B, 3, 1024, 1024)
         "input_ids": input_ids_padded,                  # (B, unified_max_length)
         "attention_mask": attention_mask_padded,        # (B, unified_max_length)
         "labels": labels_padded,                        # (B, unified_max_length)
         "seg_token_mask": seg_token_masks_padded,       # (B, unified_max_length)
-        "ground_truth_mask": ground_truth_masks,  # リストのまま返す（Original-LISA準拠）
+        "ground_truth_mask": ground_truth_masks_stacked,
         "has_mask": has_masks,
         "image_paths": image_paths,
         "text_prompts": text_prompts,
-        "formatted_prompts": formatted_prompts,        # デバッグ用に追加
-        "original_sizes": original_sizes,              # 元画像サイズ（デバッグ用）
         "masks_list": ground_truth_masks,
         "label_list": label_list,
         "resize_list": resize_list,
         "questions_list": questions_list,
         "sampled_classes_list": sampled_classes_list,
-        # 互換性のためのエイリアス
-        "images": sam_pixel_values,
+        "images": images_for_sam,
+        "images_clip": images_for_llama,
     }
 
 class LisaLlama4ValDataset(torch.utils.data.Dataset):
