@@ -252,8 +252,9 @@ class CompositeLoss(nn.Module):
         
         # 2. セグメンテーション損失
         mask_loss = None
-        predicted_masks = model_outputs.get("predicted_masks")
-        ground_truth_mask = batch.get("ground_truth_mask")
+        # pred_masksとpredicted_masksの両方をチェック
+        predicted_masks = model_outputs.get("predicted_masks") or model_outputs.get("pred_masks")
+        ground_truth_mask = batch.get("ground_truth_mask") or batch.get("ground_truth_masks")
         
         if predicted_masks is not None and ground_truth_mask is not None:
             # デバイス一致の確保：ground_truth_maskをpredicted_masksと同じデバイスに移動
@@ -290,16 +291,31 @@ class CompositeLoss(nn.Module):
             mask_loss = torch.zeros(1, device=device, requires_grad=True).squeeze()
             print(f"  ⚠️ マスクデータなし - マスク損失は0に設定")
         
-        # 3. Original-LISA方式の総損失計算: ce_loss + mask_loss
+        # 3. 新しい損失構造に対応（lm_loss, seg_loss）
+        # lm_lossとしてtext_lossを記録
+        if ce_loss is not None:
+            losses["lm_loss"] = losses["text_loss"]  # text_lossをlm_lossとしても記録
+        else:
+            losses["lm_loss"] = torch.zeros(1, device=device, requires_grad=True).squeeze()
+        
+        # seg_lossとしてmask_lossを記録
+        if mask_loss is not None:
+            losses["seg_loss"] = mask_loss
+            print(f"  🔍 seg_loss: {mask_loss.item():.6f}")
+        else:
+            losses["seg_loss"] = torch.zeros(1, device=device, requires_grad=True).squeeze()
+            print(f"  ⚠️ seg_loss: N/A (マスクデータなし)")
+        
+        # Original-LISA方式の総損失計算: ce_loss + mask_loss
         if ce_loss is not None and mask_loss is not None:
             total_loss = ce_loss + mask_loss
-            print(f"  🔍 total_loss = ce_loss + mask_loss: {total_loss.item():.6f}")
+            print(f"  🔍 total_loss = lm_loss + seg_loss: {total_loss.item():.6f}")
         elif ce_loss is not None:
             total_loss = ce_loss
-            print(f"  🔍 total_loss = ce_loss only: {total_loss.item():.6f}")
+            print(f"  🔍 total_loss = lm_loss only: {total_loss.item():.6f}")
         elif mask_loss is not None:
             total_loss = mask_loss
-            print(f"  🔍 total_loss = mask_loss only: {total_loss.item():.6f}")
+            print(f"  🔍 total_loss = seg_loss only: {total_loss.item():.6f}")
         else:
             total_loss = torch.zeros(1, device=device, requires_grad=True).squeeze()
             print(f"  ⚠️ どの損失も計算されませんでした")

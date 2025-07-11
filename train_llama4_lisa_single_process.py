@@ -59,21 +59,23 @@ from utils.utils import (
 from utils.hf_auth import ensure_hf_login
 
 def create_loss_plots(loss_history, log_dir, exp_name):
-    """学習曲線の可視化（今回の目的：3種類の損失の減少確認）"""
+    """学習曲線の可視化（シングルエンコーダー構成対応）"""
     if not loss_history:
         return
     
     # 全エポックのデータを整理
     epochs = list(range(1, len(loss_history) + 1))
     total_losses = [epoch_data['total_loss'] for epoch_data in loss_history]
-    text_losses = [epoch_data['text_loss'] for epoch_data in loss_history]
+    lm_losses = [epoch_data['lm_loss'] for epoch_data in loss_history]
+    seg_losses = [epoch_data['seg_loss'] for epoch_data in loss_history]
     dice_losses = [epoch_data['dice_loss'] for epoch_data in loss_history]
     bce_losses = [epoch_data['bce_loss'] for epoch_data in loss_history]
     
     # 統合チャート（全損失を1つのグラフに）- メイン目的
     plt.figure(figsize=(12, 8))
     plt.plot(epochs, total_losses, 'b-', linewidth=2, marker='o', label='総損失')
-    plt.plot(epochs, text_losses, 'r-', linewidth=2, marker='s', label='テキスト損失')
+    plt.plot(epochs, lm_losses, 'r-', linewidth=2, marker='s', label='LM損失')
+    plt.plot(epochs, seg_losses, 'orange', linewidth=2, marker='v', label='Seg損失')
     plt.plot(epochs, dice_losses, 'g-', linewidth=2, marker='^', label='DICE損失')
     plt.plot(epochs, bce_losses, 'm-', linewidth=2, marker='d', label='BCE損失')
     
@@ -296,11 +298,29 @@ def create_dataset_and_dataloader(model, args, logger):
     
     logger.info(f"エポックあたりのサンプル数: {samples_per_epoch}")
     
-    # HybridDatasetの初期化（既存インターフェース使用）
+    # プロセッサを取得（LoRA適用後のモデル対応）
+    if hasattr(model, 'base_model'):
+        llama_processor = model.base_model.model.llama_processor if hasattr(model.base_model, 'model') else model.base_model.llama_processor
+    else:
+        llama_processor = model.llama_processor
+    
+    # HybridDatasetの初期化（verify_dataset_integrity.pyと同じパラメータ構成）
     dataset = HybridDataset(
-        llama_processor=model.llama_processor,
+        base_image_dir=config_linux.DATASET_BASE_DIR,
+        llama_processor=llama_processor,
+        samples_per_epoch=samples_per_epoch,
+        precision="bf16",
+        llama_image_size=config_linux.LLAMA_IMAGE_SIZE,
+        sam_image_size=config_linux.SAM_IMAGE_SIZE,
+        num_classes_per_sample=3,
+        exclude_val=False,
         dataset=dataset_string,
-        samples_per_epoch=samples_per_epoch
+        sample_rate=[9, 3, 3, 1],  # reason_seg, refer_seg, vqa, sem_seg の比率
+        sem_seg_data=config_linux.SEM_SEG_DATA,
+        refer_seg_data=config_linux.REFER_SEG_DATA,
+        vqa_data=config_linux.VQA_DATA,
+        reason_seg_data=config_linux.REASON_SEG_DATA,
+        explanatory=0.1
     )
     
     logger.info(f"✓ データセット初期化完了: {len(dataset)} サンプル")
@@ -381,7 +401,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
     
     # 個別損失メトリクス初期化
     total_losses = AverageMeter('Total', ':.4e')
-    text_losses = AverageMeter('Text', ':.4e')
+    lm_losses = AverageMeter('LM', ':.4e')
+    seg_losses = AverageMeter('Seg', ':.4e')
     dice_losses = AverageMeter('DICE', ':.4e')
     bce_losses = AverageMeter('BCE', ':.4e')
     
@@ -394,7 +415,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
     # 個別損失履歴（エポック内）
     epoch_loss_history = {
         'total_loss': [],
-        'text_loss': [],
+        'lm_loss': [],
+        'seg_loss': [],
         'dice_loss': [],
         'bce_loss': []
     }
@@ -443,15 +465,17 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
                 else:
                     logger.info(f"  {key}: {type(value)}")
         
-        # 実際のLISA統合モデル使用：完全なフォワードパス（SAM機能付き）
-        # HybridDatasetの実際の出力形式に合わせて修正（引数重複エラー対策）
+        # 実際のLISA統合モデル使用：完全なフォワードパス（シングルエンコーダー構成）
+        # HybridDatasetの実際の出力形式に合わせて修正
         model_inputs = {
             'input_ids': batch['input_ids'],
             'attention_mask': batch.get('attention_mask'),
-            'images_for_llama': batch.get('images_for_llama'),  # Llama4用画像
-            'images_for_sam': batch.get('images_for_sam'),      # SAM用画像
-            'labels': batch.get('labels'),                      # 実際のラベル使用
-            'ground_truth_mask': batch.get('ground_truth_mask'),  # マスク損失計算用
+            # シングルエンコーダー構成: pixel_valuesを削除、sam_pixel_valuesのみ使用
+            'sam_pixel_values': batch.get('sam_pixel_values'),     # SAM画像入力
+            'labels': batch.get('labels'),                         # 実際のラベル使用
+            'ground_truth_masks': batch.get('ground_truth_masks'), # マスク損失計算用（複数形に修正）
+            'seg_token_mask': batch.get('seg_token_mask'),         # SEGトークン位置
+            'original_sizes': batch.get('original_sizes'),         # 元画像サイズ
             'generate_mask': True  # SAM機能を有効化
         }
         
@@ -461,7 +485,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
         model_outputs = model(**model_inputs)
         
         # 個別損失を取得（CompositeLoss統合対応）
-        individual_losses = {'total_loss': 0, 'text_loss': 0, 'dice_loss': 0, 'bce_loss': 0}
+        individual_losses = {'total_loss': 0, 'lm_loss': 0, 'seg_loss': 0, 'dice_loss': 0, 'bce_loss': 0}
         
         # デバッグ: モデル出力のキーを確認（初回のみ）
         if step == 0:
@@ -504,13 +528,27 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
                 if step == 0:
                     logger.info(f"  🔍 losses辞書キー: {list(losses_dict.keys())}")
                 
-                # text_loss
-                if 'text_loss' in losses_dict and losses_dict['text_loss'] is not None:
-                    individual_losses['text_loss'] = losses_dict['text_loss'].item()
+                # lm_loss（言語モデリング損失）
+                if 'lm_loss' in losses_dict and losses_dict['lm_loss'] is not None:
+                    individual_losses['lm_loss'] = losses_dict['lm_loss'].item()
                     if step == 0:
-                        logger.info(f"  ✓ text_loss取得成功: {individual_losses['text_loss']:.4f}")
+                        logger.info(f"  ✓ lm_loss取得成功: {individual_losses['lm_loss']:.4f}")
                 else:
-                    raise ValueError(f"text_lossが見つかりません。losses辞書キー: {list(losses_dict.keys())}")
+                    # lm_lossがない場合は0とする（VQAタスクなどの場合）
+                    individual_losses['lm_loss'] = 0.0
+                    if step == 0:
+                        logger.info(f"  ℹ️ lm_loss: N/A (セグメンテーションタスクなし)")
+                
+                # seg_loss（セグメンテーション損失）
+                if 'seg_loss' in losses_dict and losses_dict['seg_loss'] is not None:
+                    individual_losses['seg_loss'] = losses_dict['seg_loss'].item()
+                    if step == 0:
+                        logger.info(f"  ✓ seg_loss取得成功: {individual_losses['seg_loss']:.4f}")
+                else:
+                    # seg_lossがない場合は0とする
+                    individual_losses['seg_loss'] = 0.0
+                    if step == 0:
+                        logger.info(f"  ℹ️ seg_loss: N/A")
                 
                 # dice_loss
                 if 'dice_loss' in losses_dict and losses_dict['dice_loss'] is not None:
@@ -518,7 +556,9 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
                     if step == 0:
                         logger.info(f"  ✓ dice_loss取得成功: {individual_losses['dice_loss']:.4f}")
                 else:
-                    raise ValueError(f"dice_lossが見つかりません。losses辞書キー: {list(losses_dict.keys())}")
+                    individual_losses['dice_loss'] = 0.0
+                    if step == 0:
+                        logger.info(f"  ℹ️ dice_loss: N/A")
                 
                 # bce_loss
                 if 'bce_loss' in losses_dict and losses_dict['bce_loss'] is not None:
@@ -526,9 +566,11 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
                     if step == 0:
                         logger.info(f"  ✓ bce_loss取得成功: {individual_losses['bce_loss']:.4f}")
                 else:
-                    raise ValueError(f"bce_lossが見つかりません。losses辞書キー: {list(losses_dict.keys())}")
+                    individual_losses['bce_loss'] = 0.0
+                    if step == 0:
+                        logger.info(f"  ℹ️ bce_loss: N/A")
             else:
-                raise ValueError("losses辞書が見つかりません")
+                logger.warning("losses辞書が見つかりません")
         else:
             # 非辞書型出力の場合
             if hasattr(model_outputs, 'loss'):
@@ -564,13 +606,15 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
         # 個別メトリクス更新
         batch_size = batch['input_ids'].size(0)
         total_losses.update(individual_losses['total_loss'], batch_size)
-        text_losses.update(individual_losses['text_loss'], batch_size)
+        lm_losses.update(individual_losses['lm_loss'], batch_size)
+        seg_losses.update(individual_losses['seg_loss'], batch_size)
         dice_losses.update(individual_losses['dice_loss'], batch_size)
         bce_losses.update(individual_losses['bce_loss'], batch_size)
         
         # エポック内損失履歴に追加
         epoch_loss_history['total_loss'].append(individual_losses['total_loss'])
-        epoch_loss_history['text_loss'].append(individual_losses['text_loss'])
+        epoch_loss_history['lm_loss'].append(individual_losses['lm_loss'])
+        epoch_loss_history['seg_loss'].append(individual_losses['seg_loss'])
         epoch_loss_history['dice_loss'].append(individual_losses['dice_loss'])
         epoch_loss_history['bce_loss'].append(individual_losses['bce_loss'])
         
@@ -585,7 +629,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
             logger.info(f"🚀 Epoch [{epoch+1}] Step [{step+1:3d}/{total_steps}] ({progress_pct:5.1f}%) "
                        f"ETA: {eta/60:.1f}min | "
                        f"Total: {individual_losses['total_loss']:6.3f} | "
-                       f"Text: {individual_losses['text_loss']:6.3f} | "
+                       f"LM: {individual_losses['lm_loss']:6.3f} | "
+                       f"Seg: {individual_losses['seg_loss']:6.3f} | "
                        f"DICE: {individual_losses['dice_loss']:6.3f} | "
                        f"BCE: {individual_losses['bce_loss']:6.3f}")
             
@@ -593,7 +638,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
             if writer is not None:
                 global_step = epoch * len(dataloader) + step
                 writer.add_scalar('Train/TotalLoss', total_losses.val, global_step)
-                writer.add_scalar('Train/TextLoss', text_losses.val, global_step)
+                writer.add_scalar('Train/LMLoss', lm_losses.val, global_step)
+                writer.add_scalar('Train/SegLoss', seg_losses.val, global_step)
                 writer.add_scalar('Train/DiceLoss', dice_losses.val, global_step)
                 writer.add_scalar('Train/BCELoss', bce_losses.val, global_step)
                 writer.add_scalar('Train/LR', scheduler.get_last_lr()[0], global_step)
@@ -606,14 +652,16 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
     epoch_time = time.time() - start_time
     logger.info(f"✓ エポック {epoch} 完了:")
     logger.info(f"  - 総損失: {total_losses.avg:.4f}")
-    logger.info(f"  - テキスト損失: {text_losses.avg:.4f}")
+    logger.info(f"  - LM損失: {lm_losses.avg:.4f}")
+    logger.info(f"  - Seg損失: {seg_losses.avg:.4f}")
     logger.info(f"  - DICE損失: {dice_losses.avg:.4f}")
     logger.info(f"  - BCE損失: {bce_losses.avg:.4f}")
     logger.info(f"  - 時間: {epoch_time:.1f}秒")
     
     return {
         'total_loss': total_losses.avg,
-        'text_loss': text_losses.avg,
+        'lm_loss': lm_losses.avg,
+        'seg_loss': seg_losses.avg,
         'dice_loss': dice_losses.avg,
         'bce_loss': bce_losses.avg,
         'epoch_loss_history': epoch_loss_history
