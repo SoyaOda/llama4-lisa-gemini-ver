@@ -1,0 +1,25 @@
+{
+  "dataset_name": "unknown",
+  "sample_idx": 0,
+  "session_timestamp": "20250711_083148",
+  "item_timestamp": "20250711_084123_752",
+  "original_image_path": "/lambda/nfs/lisa-gemma-project-fs/data/dataset/coco/train2017/000000541596.jpg",
+  "conversations": [
+    {
+      "from": "human",
+      "value": " user: <image>\nWhat do you see happening in this image? assistant: The image depicts a bus, possibly involved in an accident, situated next to a busy street. A group of emergency workers and construction workers wearing safety gear are surrounding the bus, attending to the situation. There are at least fourteen people on the scene, including some standing close to the bus, while others are positioned further away.\n\nThe location appears to be at or near a construction site, as indicated by the presence of so many workers in safety gear. The scene is quite busy, with all the people involved focusing on addressing the situation at hand.</s> [SEG]"
+    }
+  ],
+  "questions": [
+    " user: <image>\nWhat do you see happening in this image? assistant: The image depicts a bus, possibly involved in an accident, situated next to a busy street. A group of emergency workers and construction workers wearing safety gear are surrounding the bus, attending to the situation. There are at least fourteen people on the scene, including some standing close to the bus, while others are positioned further away.\n\nThe location appears to be at or near a construction site, as indicated by the presence of so many workers in safety gear. The scene is quite busy, with all the people involved focusing on addressing the situation at hand.</s>"
+  ],
+  "class_names": [
+    " user: <image>\nWhat do you see happening in this image? assistant: The image depicts a bus, possibly involved in an accident, situated next to a busy street. A group of emergency workers and construction workers wearing safety gear are surrounding the bus, attending to the situation. There are at least fourteen people on the scene, including some standing close to the bus, while others are positioned further away.\n\nThe location appears to be at or near a construction site, as indicated by the presence of so many workers in safety gear. The scene is quite busy, with all the people involved focusing on addressing the situation at hand.</s>"
+  ],
+  "comparison_image": "verification_output/session_20250711_083148/unknown_0_20250711_084123_752_comparison.png",
+  "processing_note": "Single-encoder configuration: SAM processes images",
+  "image_size": "640x427",
+  "mask_size": "640x427",
+  "formatted_prompt": "USER: user: What do you see happening in this image? assistant: The image depicts a bus, possibly involved in an accident, situated next to a busy street. A group of emergency workers and construction workers wearing safety gear are surrounding the bus, attending to the situation. There are at least fourteen people on the scene, including some standing close to the bus, while others are positioned further away.\n\nThe location appears to be at or near a construction site, as indicated by the presence of so many workers in safety gear. The scene is quite busy, with all the people involved focusing on addressing the situation at hand.</s> [SEG]",
+  "is_single_encoder": true
+}

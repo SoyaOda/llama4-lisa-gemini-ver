@@ -1,0 +1,29 @@
+{
+  "dataset_name": "unknown",
+  "sample_idx": 1,
+  "session_timestamp": "20250711_083148",
+  "item_timestamp": "20250711_084125_368",
+  "original_image_path": "/lambda/nfs/lisa-gemma-project-fs/data/dataset/reason_seg/ReasonSeg/train/133371041_4fbf4663d9_o.jpg",
+  "conversations": [
+    {
+      "from": "human",
+      "value": " user: Where is the region that Could you identify the object in the picture that exemplifies a hard exoskeleton, which some invertebrates possess for defense and protection?? Please segment it. assistant: Sure, the segmentation result is [SEG].</s>"
+    }
+  ],
+  "questions": [
+    "Where is the region that Could you identify the object in the picture that exemplifies a hard exoskeleton, which some invertebrates possess for defense and protection?? Please segment it.",
+    "Can you identify and segment the area described as: Invertebrates will often have a tough exoskeleton to protect themselves from danger. What object in the picture might serve as an example of this armor-like structure??",
+    "Can you identify and segment the area described as: What object in the picture could be considered an example of a protective structure, similar to the exoskeleton of certain invertebrate species??"
+  ],
+  "class_names": [
+    "Could you identify the object in the picture that exemplifies a hard exoskeleton, which some invertebrates possess for defense and protection?",
+    "Invertebrates will often have a tough exoskeleton to protect themselves from danger. What object in the picture might serve as an example of this armor-like structure?",
+    "What object in the picture could be considered an example of a protective structure, similar to the exoskeleton of certain invertebrate species?"
+  ],
+  "comparison_image": "verification_output/session_20250711_083148/unknown_1_20250711_084125_368_comparison.png",
+  "processing_note": "Single-encoder configuration: SAM processes images",
+  "image_size": "3166x2218",
+  "mask_size": "3166x2218",
+  "formatted_prompt": "USER: user: Where is the region that Could you identify the object in the picture that exemplifies a hard exoskeleton, which some invertebrates possess for defense and protection?? Please segment it. assistant: Sure, the segmentation result is [SEG].</s>",
+  "is_single_encoder": true
+}

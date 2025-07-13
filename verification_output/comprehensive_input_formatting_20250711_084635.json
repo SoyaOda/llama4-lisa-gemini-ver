@@ -1,0 +1,4346 @@
+{
+  "session_id": "20250711_084635",
+  "total_datasets": 6,
+  "samples_per_dataset": 25,
+  "dataset_results": {
+    "sem_seg_ade20k": {
+      "dataset_name": "sem_seg_ade20k",
+      "dataset_type": "sem_seg",
+      "sub_dataset": "ade20k",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9411764705882353,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9444444444444444,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9166666666666666,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 28,
+          "non_pad_tokens": 28,
+          "labeled_tokens": 28,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              19
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 28,
+          "non_pad_tokens": 28,
+          "labeled_tokens": 28,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              19
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 30,
+          "non_pad_tokens": 30,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 30,
+          "non_pad_tokens": 30,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9375,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8333333333333334,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 31,
+          "non_pad_tokens": 31,
+          "labeled_tokens": 31,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              22
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 31,
+          "non_pad_tokens": 31,
+          "labeled_tokens": 31,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              22
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 28,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              19
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.875,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9375,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 30,
+          "non_pad_tokens": 30,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 30,
+          "non_pad_tokens": 30,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 32,
+          "non_pad_tokens": 32,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 20.67320418357849,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 32.72,
+        "avg_labeled_tokens": 31.88,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    },
+    "refer_seg_refcoco": {
+      "dataset_name": "refer_seg_refcoco",
+      "dataset_type": "refer_seg",
+      "sub_dataset": "refcoco",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8918918918918919,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9487179487179487,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 30,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              21
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8333333333333334,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 40,
+          "non_pad_tokens": 40,
+          "labeled_tokens": 40,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              31
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 40,
+          "non_pad_tokens": 40,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.975,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 31,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              22
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.7948717948717948,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 38,
+          "non_pad_tokens": 38,
+          "labeled_tokens": 38,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              29
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 38,
+          "non_pad_tokens": 38,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8947368421052632,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9411764705882353,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9444444444444444,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 35,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              26
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9459459459459459,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.918918918918919,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 33,
+          "non_pad_tokens": 33,
+          "labeled_tokens": 27,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              18
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8181818181818182,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 33,
+          "non_pad_tokens": 33,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8461538461538461,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 20.092373371124268,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 37.04,
+        "avg_labeled_tokens": 35.2,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    },
+    "refer_seg_refcoco+": {
+      "dataset_name": "refer_seg_refcoco+",
+      "dataset_type": "refer_seg",
+      "sub_dataset": "refcoco+",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 35,
+          "non_pad_tokens": 35,
+          "labeled_tokens": 31,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              22
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8857142857142857,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 35,
+          "non_pad_tokens": 35,
+          "labeled_tokens": 35,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              26
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 31,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              22
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9117647058823529,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9230769230769231,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8648648648648649,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 35,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              26
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9722222222222222,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8888888888888888,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8648648648648649,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9705882352941176,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 33,
+          "non_pad_tokens": 33,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 33,
+          "non_pad_tokens": 33,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9696969696969697,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8648648648648649,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 33,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              24
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9705882352941176,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 21.49167561531067,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 35.6,
+        "avg_labeled_tokens": 34.28,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    },
+    "refer_seg_refcocog": {
+      "dataset_name": "refer_seg_refcocog",
+      "dataset_type": "refer_seg",
+      "sub_dataset": "refcocog",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9411764705882353,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 34,
+          "non_pad_tokens": 34,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 41,
+          "non_pad_tokens": 41,
+          "labeled_tokens": 41,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              32
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 41,
+          "non_pad_tokens": 41,
+          "labeled_tokens": 38,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              29
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.926829268292683,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 43,
+          "non_pad_tokens": 43,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9069767441860465,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 43,
+          "non_pad_tokens": 43,
+          "labeled_tokens": 43,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              34
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9487179487179487,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 49,
+          "non_pad_tokens": 49,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.7346938775510204,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 49,
+          "non_pad_tokens": 49,
+          "labeled_tokens": 49,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              40
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 48,
+          "non_pad_tokens": 48,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.75,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 48,
+          "non_pad_tokens": 48,
+          "labeled_tokens": 48,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              39
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.972972972972973,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 42,
+          "non_pad_tokens": 42,
+          "labeled_tokens": 42,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              33
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 42,
+          "non_pad_tokens": 42,
+          "labeled_tokens": 32,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              23
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.7619047619047619,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 43,
+          "non_pad_tokens": 43,
+          "labeled_tokens": 43,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              34
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 43,
+          "non_pad_tokens": 43,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9069767441860465,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 40,
+          "non_pad_tokens": 40,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.975,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 40,
+          "non_pad_tokens": 40,
+          "labeled_tokens": 40,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              31
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.918918918918919,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 37,
+          "non_pad_tokens": 37,
+          "labeled_tokens": 37,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              28
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 36,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              27
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 36,
+          "non_pad_tokens": 36,
+          "labeled_tokens": 34,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              25
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9444444444444444,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 39,
+          "non_pad_tokens": 39,
+          "labeled_tokens": 39,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              30
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 25.373196363449097,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 40.68,
+        "avg_labeled_tokens": 38.4,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    },
+    "vqa_llava_instruct_150k": {
+      "dataset_name": "vqa_llava_instruct_150k",
+      "dataset_type": "vqa",
+      "sub_dataset": "llava_instruct_150k",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 548,
+          "non_pad_tokens": 548,
+          "labeled_tokens": 248,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              242
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.45255474452554745,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 548,
+          "non_pad_tokens": 548,
+          "labeled_tokens": 548,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              542
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 503,
+          "non_pad_tokens": 503,
+          "labeled_tokens": 178,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              172
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.3538767395626243,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 503,
+          "non_pad_tokens": 503,
+          "labeled_tokens": 503,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              497
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 162,
+          "non_pad_tokens": 162,
+          "labeled_tokens": 107,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              101
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.6604938271604939,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 162,
+          "non_pad_tokens": 162,
+          "labeled_tokens": 162,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              156
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 384,
+          "non_pad_tokens": 384,
+          "labeled_tokens": 191,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              185
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.4973958333333333,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 384,
+          "non_pad_tokens": 384,
+          "labeled_tokens": 384,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              378
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 200,
+          "non_pad_tokens": 200,
+          "labeled_tokens": 200,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              194
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 200,
+          "non_pad_tokens": 200,
+          "labeled_tokens": 183,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              177
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.915,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 526,
+          "non_pad_tokens": 526,
+          "labeled_tokens": 526,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              520
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 526,
+          "non_pad_tokens": 526,
+          "labeled_tokens": 233,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              227
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.4429657794676806,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 569,
+          "non_pad_tokens": 569,
+          "labeled_tokens": 160,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              154
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.281195079086116,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 569,
+          "non_pad_tokens": 569,
+          "labeled_tokens": 569,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              563
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 382,
+          "non_pad_tokens": 382,
+          "labeled_tokens": 382,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              376
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 382,
+          "non_pad_tokens": 382,
+          "labeled_tokens": 166,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              160
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.43455497382198954,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 162,
+          "non_pad_tokens": 162,
+          "labeled_tokens": 162,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              156
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 162,
+          "non_pad_tokens": 162,
+          "labeled_tokens": 110,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              104
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.6790123456790124,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 163,
+          "non_pad_tokens": 163,
+          "labeled_tokens": 163,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              157
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 163,
+          "non_pad_tokens": 163,
+          "labeled_tokens": 157,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              151
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9631901840490797,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 426,
+          "non_pad_tokens": 426,
+          "labeled_tokens": 426,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              420
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 426,
+          "non_pad_tokens": 426,
+          "labeled_tokens": 154,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              148
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.3615023474178404,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 158,
+          "non_pad_tokens": 158,
+          "labeled_tokens": 78,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              72
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.4936708860759494,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 158,
+          "non_pad_tokens": 158,
+          "labeled_tokens": 158,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              152
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 175,
+          "non_pad_tokens": 175,
+          "labeled_tokens": 175,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              169
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 10.840389251708984,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 341.64,
+        "avg_labeled_tokens": 252.92,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    },
+    "reason_seg_ReasonSeg_train": {
+      "dataset_name": "reason_seg_ReasonSeg_train",
+      "dataset_type": "reason_seg",
+      "sub_dataset": "ReasonSeg|train",
+      "total_samples": 25,
+      "successful_samples": 25,
+      "failed_samples": 0,
+      "token_statistics": [
+        {
+          "sample_idx": 0,
+          "sequence_length": 160,
+          "non_pad_tokens": 160,
+          "labeled_tokens": 136,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              48
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.85,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 1,
+          "sequence_length": 160,
+          "non_pad_tokens": 160,
+          "labeled_tokens": 160,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              54
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 2,
+          "sequence_length": 177,
+          "non_pad_tokens": 177,
+          "labeled_tokens": 177,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              46
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 3,
+          "sequence_length": 177,
+          "non_pad_tokens": 177,
+          "labeled_tokens": 49,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              40
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.2768361581920904,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 4,
+          "sequence_length": 149,
+          "non_pad_tokens": 149,
+          "labeled_tokens": 149,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              58
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 5,
+          "sequence_length": 149,
+          "non_pad_tokens": 149,
+          "labeled_tokens": 149,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              51
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 6,
+          "sequence_length": 78,
+          "non_pad_tokens": 78,
+          "labeled_tokens": 77,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              68
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9871794871794872,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 7,
+          "sequence_length": 78,
+          "non_pad_tokens": 78,
+          "labeled_tokens": 78,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              69
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 8,
+          "sequence_length": 143,
+          "non_pad_tokens": 143,
+          "labeled_tokens": 63,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              54
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.4405594405594406,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 9,
+          "sequence_length": 143,
+          "non_pad_tokens": 143,
+          "labeled_tokens": 143,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              52
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 10,
+          "sequence_length": 71,
+          "non_pad_tokens": 71,
+          "labeled_tokens": 64,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              55
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9014084507042254,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 11,
+          "sequence_length": 71,
+          "non_pad_tokens": 71,
+          "labeled_tokens": 71,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              62
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 12,
+          "sequence_length": 173,
+          "non_pad_tokens": 173,
+          "labeled_tokens": 58,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              49
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.3352601156069364,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 13,
+          "sequence_length": 173,
+          "non_pad_tokens": 173,
+          "labeled_tokens": 173,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              57
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 14,
+          "sequence_length": 153,
+          "non_pad_tokens": 153,
+          "labeled_tokens": 153,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              50
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 15,
+          "sequence_length": 153,
+          "non_pad_tokens": 153,
+          "labeled_tokens": 102,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              48
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.6666666666666666,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 16,
+          "sequence_length": 176,
+          "non_pad_tokens": 176,
+          "labeled_tokens": 145,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              68
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.8238636363636364,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 17,
+          "sequence_length": 176,
+          "non_pad_tokens": 176,
+          "labeled_tokens": 176,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              40
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 18,
+          "sequence_length": 76,
+          "non_pad_tokens": 76,
+          "labeled_tokens": 70,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              61
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.9210526315789473,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 19,
+          "sequence_length": 76,
+          "non_pad_tokens": 76,
+          "labeled_tokens": 76,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              67
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 20,
+          "sequence_length": 141,
+          "non_pad_tokens": 141,
+          "labeled_tokens": 67,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              58
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.475177304964539,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 21,
+          "sequence_length": 141,
+          "non_pad_tokens": 141,
+          "labeled_tokens": 141,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              64
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 22,
+          "sequence_length": 125,
+          "non_pad_tokens": 125,
+          "labeled_tokens": 125,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              56
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 23,
+          "sequence_length": 125,
+          "non_pad_tokens": 125,
+          "labeled_tokens": 76,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              51
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 0.608,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        },
+        {
+          "sample_idx": 24,
+          "sequence_length": 61,
+          "non_pad_tokens": 61,
+          "labeled_tokens": 61,
+          "user_turn_tokens": 0,
+          "model_turn_tokens": 0,
+          "special_tokens": {
+            "seg_positions": [
+              52
+            ],
+            "image_positions": [
+              6
+            ]
+          },
+          "label_masking_ratio": 1.0,
+          "single_encoder_checks": {
+            "has_sam_pixel_values": true,
+            "has_pixel_values": false,
+            "is_single_encoder": true
+          }
+        }
+      ],
+      "label_masking_results": [
+        {
+          "sample_idx": 0,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 1,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 2,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 3,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 4,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 5,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 6,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 7,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 8,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 9,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 10,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 11,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 12,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 13,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 14,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 15,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 16,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 17,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 18,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 19,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 20,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 21,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 22,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 23,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        },
+        {
+          "sample_idx": 24,
+          "is_correct": true,
+          "error_count": 0,
+          "errors": []
+        }
+      ],
+      "processing_time": 12.803353309631348,
+      "errors": [],
+      "statistics": {
+        "avg_sequence_length": 132.2,
+        "avg_labeled_tokens": 109.56,
+        "seg_detection_rate": 1.0,
+        "image_token_rate": 1.0,
+        "success_rate": 1.0,
+        "single_encoder_rate": 1.0
+      }
+    }
+  },
+  "summary": {
+    "successful_datasets": 6,
+    "failed_datasets": 0,
+    "total_samples": 150,
+    "successful_samples": 150,
+    "total_processing_time": 111.27574801445007
+  }
+}

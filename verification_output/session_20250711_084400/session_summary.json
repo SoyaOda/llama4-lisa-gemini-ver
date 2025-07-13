@@ -1,0 +1,17 @@
+{
+  "session_info": {
+    "session_timestamp": "20250711_084400",
+    "start_time": "20250711_084400",
+    "end_time": "20250711_084722",
+    "datasets_verified": [
+      "sem_seg",
+      "refer_seg",
+      "vqa",
+      "reason_seg"
+    ],
+    "samples_per_dataset": 2,
+    "config_used": "config_linux.py",
+    "single_encoder_mode": true
+  },
+  "verification_results": "See individual metadata files for detailed results"
+}

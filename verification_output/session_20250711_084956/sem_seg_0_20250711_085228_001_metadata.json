@@ -1,0 +1,29 @@
+{
+  "dataset_name": "sem_seg",
+  "sample_idx": 0,
+  "session_timestamp": "20250711_084956",
+  "item_timestamp": "20250711_085228_001",
+  "original_image_path": "/lambda/nfs/lisa-gemma-project-fs/data/dataset/vlpart/pascal_part/VOCdevkit/VOC2010/JPEGImages/2008_005380.jpg",
+  "conversations": [
+    {
+      "from": "human",
+      "value": " user: <image>\nPlease provide a segmentation mask for the the part of the cat:paw. assistant: Sure, [SEG].</s>"
+    }
+  ],
+  "questions": [
+    "<image>\nPlease provide a segmentation mask for the the part of the cat:paw.",
+    "Where is the the part of the cat:ear? Please segment it.",
+    "Where is the cat:paw part? Please segment it."
+  ],
+  "class_names": [
+    "the part of the cat:paw",
+    "the part of the cat:ear",
+    "cat:paw part"
+  ],
+  "comparison_image": "verification_output/session_20250711_084956/sem_seg_0_20250711_085228_001_comparison.png",
+  "processing_note": "Single-encoder configuration: SAM processes images",
+  "image_size": "333x500",
+  "mask_size": "333x500",
+  "formatted_prompt": "<|begin_of_text|><|header_start|>user<|header_end|>\n\n<|image|>user: Please provide a segmentation mask for the the part of the cat:paw. assistant: Sure, [SEG].</s><|eot|><|header_start|>assistant<|header_end|>\n\n",
+  "is_single_encoder": true
+}

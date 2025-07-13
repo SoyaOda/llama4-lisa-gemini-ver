@@ -1,0 +1,203 @@
+2025-07-13 07:22:08,850 [INFO] ================================================================================
+2025-07-13 07:22:08,850 [INFO] LISA-Llama4 シングルプロセス学習開始（overfit成功パターン移植）
+2025-07-13 07:22:08,850 [INFO] ================================================================================
+2025-07-13 07:22:08,850 [INFO] 実験名: quick_test
+2025-07-13 07:22:08,851 [INFO] バッチサイズ: 1
+2025-07-13 07:22:08,851 [INFO] エポック数: 1
+2025-07-13 07:22:08,851 [INFO] 学習率: 0.0002
+2025-07-13 07:22:08,851 [INFO] ステップ制限: 10/エポック
+2025-07-13 07:22:09,317 [INFO] === LISA-Llama4統合モデル初期化 ===
+2025-07-13 07:22:09,317 [INFO] 動的コンパイル無効化: GPU分散エラー回避のため
+2025-07-13 07:23:05,107 [INFO] ✓ LISA統合モデル初期化完了
+2025-07-13 07:23:05,116 [INFO]   - 総パラメータ: 104,343,354,928
+2025-07-13 07:23:05,116 [INFO] === LoRA設定適用 ===
+2025-07-13 07:23:05,117 [INFO] ✓ 元のdevice_map保存（llama_model経由）: 54 エントリ
+2025-07-13 07:23:09,765 [INFO] ✅ Gradient Checkpointing有効化試行（メモリ30%削減）
+2025-07-13 07:23:09,786 [INFO] ✅ llama_modelでGradient Checkpointing有効化成功
+2025-07-13 07:23:09,786 [INFO] ✓ base_model.llama_model経由device_mapアクセス確認済み
+2025-07-13 07:23:09,819 [INFO] ✓ LoRA適用完了
+2025-07-13 07:23:09,819 [INFO]   - 学習可能パラメータ: 124,211,200
+2025-07-13 07:23:09,819 [INFO]   - 全パラメータ: 104,467,566,128
+2025-07-13 07:23:09,819 [INFO]   - 学習可能割合: 0.119%
+2025-07-13 07:23:09,819 [INFO] === 追加学習可能パラメータの凍結解除（config_linux設定） ===
+2025-07-13 07:23:09,824 [INFO]   ⚠️ base_model.model.llama_model.multi_modal_projector.linear_1.weight はdtype=torch.uint8のためスキップ
+2025-07-13 07:23:09,825 [INFO]   ✅ base_model.model.llama_model.language_model.model.embed_tokens.weight を学習可能に設定 (shape: torch.Size([202048, 5120]))
+2025-07-13 07:23:09,835 [INFO]   ✅ base_model.model.llama_model.language_model.lm_head.weight を学習可能に設定 (shape: torch.Size([202048, 5120]))
+2025-07-13 07:23:09,837 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,837 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,837 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,837 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,837 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.self_attn.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm1.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,838 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 128]))
+2025-07-13 07:23:09,839 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_token_to_image.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm2.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm2.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.mlp.lin1.weight を学習可能に設定 (shape: torch.Size([2048, 256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.mlp.lin1.bias を学習可能に設定 (shape: torch.Size([2048]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.mlp.lin2.weight を学習可能に設定 (shape: torch.Size([256, 2048]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.mlp.lin2.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm3.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,840 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm3.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm4.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.norm4.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,841 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 128]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.0.cross_attn_image_to_token.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,842 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.self_attn.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm1.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,843 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 128]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_token_to_image.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,844 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm2.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm2.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.mlp.lin1.weight を学習可能に設定 (shape: torch.Size([2048, 256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.mlp.lin1.bias を学習可能に設定 (shape: torch.Size([2048]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.mlp.lin2.weight を学習可能に設定 (shape: torch.Size([256, 2048]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.mlp.lin2.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm3.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm3.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,845 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm4.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.norm4.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,846 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 128]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.layers.1.cross_attn_image_to_token.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.q_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.q_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.k_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.k_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,847 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.v_proj.base_layer.weight を学習可能に設定 (shape: torch.Size([128, 256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.v_proj.base_layer.bias を学習可能に設定 (shape: torch.Size([128]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.out_proj.weight を学習可能に設定 (shape: torch.Size([256, 128]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.final_attn_token_to_image.out_proj.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.norm_final_attn.weight を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.transformer.norm_final_attn.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_token.weight を学習可能に設定 (shape: torch.Size([1, 256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.mask_tokens.weight を学習可能に設定 (shape: torch.Size([4, 256]))
+2025-07-13 07:23:09,848 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.0.weight を学習可能に設定 (shape: torch.Size([256, 64, 2, 2]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.0.bias を学習可能に設定 (shape: torch.Size([64]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.1.weight を学習可能に設定 (shape: torch.Size([64]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.1.bias を学習可能に設定 (shape: torch.Size([64]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.3.weight を学習可能に設定 (shape: torch.Size([64, 32, 2, 2]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_upscaling.3.bias を学習可能に設定 (shape: torch.Size([32]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.0.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,849 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.0.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.1.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.2.weight を学習可能に設定 (shape: torch.Size([32, 256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.0.layers.2.bias を学習可能に設定 (shape: torch.Size([32]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.0.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.0.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.1.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,850 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.2.weight を学習可能に設定 (shape: torch.Size([32, 256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.1.layers.2.bias を学習可能に設定 (shape: torch.Size([32]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.0.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.0.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.1.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.2.weight を学習可能に設定 (shape: torch.Size([32, 256]))
+2025-07-13 07:23:09,851 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.2.layers.2.bias を学習可能に設定 (shape: torch.Size([32]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.0.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.0.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.1.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.2.weight を学習可能に設定 (shape: torch.Size([32, 256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.output_hypernetworks_mlps.3.layers.2.bias を学習可能に設定 (shape: torch.Size([32]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.0.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,852 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.0.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.1.weight を学習可能に設定 (shape: torch.Size([256, 256]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.1.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.2.weight を学習可能に設定 (shape: torch.Size([4, 256]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.sam_model.mask_decoder.iou_prediction_head.layers.2.bias を学習可能に設定 (shape: torch.Size([4]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.multi_modal_projector.projector.0.weight を学習可能に設定 (shape: torch.Size([5120, 5120]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.multi_modal_projector.projector.0.bias を学習可能に設定 (shape: torch.Size([5120]))
+2025-07-13 07:23:09,853 [INFO]   ✅ base_model.model.multi_modal_projector.projector.2.weight を学習可能に設定 (shape: torch.Size([256, 5120]))
+2025-07-13 07:23:09,854 [INFO]   ✅ base_model.model.multi_modal_projector.projector.2.bias を学習可能に設定 (shape: torch.Size([256]))
+2025-07-13 07:23:09,854 [INFO] ✓ 追加で126個のパラメータを学習可能に設定
+2025-07-13 07:23:09,885 [INFO] ✓ 最終学習可能パラメータ: 2,224,771,556
+2025-07-13 07:23:09,885 [INFO] ✓ 最終学習可能割合: 2.130%
+2025-07-13 07:23:09,885 [INFO] === LoRA適用後device_map確認 ===
+2025-07-13 07:23:09,886 [INFO] ✓ base_model.llama_model経由でhf_device_mapアクセス成功
+2025-07-13 07:23:09,886 [INFO]   - デバイスマップ: {'vision_model': 0, 'multi_modal_projector': 0, 'language_model.model.embed_tokens': 0, 'language_model.model.layers.0': 0, 'language_model.model.layers.1': 0}...
+2025-07-13 07:23:09,886 [INFO]   - 使用GPU数: 8
+2025-07-13 07:23:09,886 [INFO] === データセット初期化 ===
+2025-07-13 07:23:09,887 [INFO] 対象データセット: ['reason_seg']
+2025-07-13 07:23:09,887 [INFO] エポックあたりのサンプル数: 500
+2025-07-13 07:23:09,909 [INFO] ✓ データセット初期化完了: 500 サンプル
+2025-07-13 07:23:09,909 [INFO] データセット構成: ['reason_seg']
+2025-07-13 07:23:09,910 [INFO] ✓ DataLoader作成完了: バッチサイズ=1, ワーカー数=4
+2025-07-13 07:23:09,930 [INFO] 📌 Model Parallelism検出: 標準AdamWを使用（8bit Adamは非互換）
+2025-07-13 07:23:09,932 [INFO] ✅ cosineスケジューラー設定（warmup: 0ステップ = 全体の3%）
+2025-07-13 07:23:09,932 [INFO] ✓ オプティマイザー設定完了: 学習可能パラメータ=1,112
+2025-07-13 07:23:11,534 [INFO] Model Parallelismデバイスマップ確認: base_model.llama_model経由
+2025-07-13 07:23:11,539 [INFO] バッチ内容: ['sam_pixel_values', 'input_ids', 'attention_mask', 'labels', 'seg_token_mask', 'ground_truth_mask', 'has_mask', 'image_paths', 'text_prompts', 'formatted_prompts', 'original_sizes', 'masks_list', 'label_list', 'resize_list', 'questions_list', 'sampled_classes_list', 'images']
+2025-07-13 07:23:11,539 [INFO]   sam_pixel_values: torch.Size([1, 3, 1024, 1024]) (torch.float32)
+2025-07-13 07:23:11,540 [INFO]   input_ids: torch.Size([1, 166]) (torch.int64)
+2025-07-13 07:23:11,540 [INFO]   attention_mask: torch.Size([1, 166]) (torch.int64)
+2025-07-13 07:23:11,540 [INFO]   labels: torch.Size([1, 166]) (torch.int64)
+2025-07-13 07:23:11,540 [INFO]   seg_token_mask: torch.Size([1, 166]) (torch.bool)
+2025-07-13 07:23:11,541 [INFO]   ground_truth_mask: <class 'list'>
+2025-07-13 07:23:11,541 [INFO]   has_mask: <class 'list'>
+2025-07-13 07:23:11,541 [INFO]   image_paths: <class 'list'>
+2025-07-13 07:23:11,542 [INFO]   text_prompts: <class 'list'>
+2025-07-13 07:23:11,542 [INFO]   formatted_prompts: <class 'list'>
+2025-07-13 07:23:11,542 [INFO]   original_sizes: <class 'list'>
+2025-07-13 07:23:11,542 [INFO]   masks_list: <class 'list'>
+2025-07-13 07:23:11,543 [INFO]   label_list: <class 'list'>
+2025-07-13 07:23:11,543 [INFO]   resize_list: <class 'list'>
+2025-07-13 07:23:11,543 [INFO]   questions_list: <class 'list'>
+2025-07-13 07:23:11,547 [INFO]   sampled_classes_list: <class 'list'>
+2025-07-13 07:23:11,547 [INFO]   images: torch.Size([1, 3, 1024, 1024]) (torch.float32)
+2025-07-13 07:23:14,875 [INFO]   🔍 モデル出力キー: ['text_loss', 'logits', 'hidden_states', 'predicted_masks', 'losses', 'loss', 'pred_masks']
+2025-07-13 07:23:14,876 [INFO]   ✓ losses辞書内total_loss取得成功: 11.4868
+2025-07-13 07:23:14,876 [INFO]   🔍 losses辞書キー: ['text_loss', 'dice_loss', 'bce_loss', 'lm_loss', 'seg_loss', 'total_loss']
+2025-07-13 07:23:14,876 [INFO]   ✓ lm_loss取得成功: 4.5000
+2025-07-13 07:23:14,876 [INFO]   ✓ seg_loss取得成功: 6.9868
+2025-07-13 07:23:14,877 [INFO]   ✓ dice_loss取得成功: 0.9831
+2025-07-13 07:23:14,877 [INFO]   ✓ bce_loss取得成功: 6.0037
+2025-07-13 07:23:17,313 [INFO] 🚀 Epoch [1] Step [  1/10] ( 10.0%) ETA: 0.0min | Total: 11.487 | LM:  4.500 | Seg:  6.987 | DICE:  0.983 | BCE:  6.004
+2025-07-13 07:23:40,506 [INFO] ✓ エポック 0 完了:
+2025-07-13 07:23:40,507 [INFO]   - 総損失: 6.3343
+2025-07-13 07:23:40,507 [INFO]   - LM損失: 4.2516
+2025-07-13 07:23:40,508 [INFO]   - Seg損失: 2.0828
+2025-07-13 07:23:40,508 [INFO]   - DICE損失: 0.9034
+2025-07-13 07:23:40,508 [INFO]   - BCE損失: 1.1794
+2025-07-13 07:23:40,508 [INFO]   - 時間: 30.5秒
+2025-07-13 07:23:40,510 [INFO] 学習曲線を更新中... (エポック 1)
+2025-07-13 07:23:41,370 [INFO] ✓ 学習曲線を保存: ./logs/quick_test_20250713_072208/loss_curves_quick_test.png
+2025-07-13 07:23:41,371 [INFO] 最終学習曲線を生成中...
+2025-07-13 07:23:42,143 [INFO] ✓ 最終学習曲線を保存: ./logs/quick_test_20250713_072208/loss_curves_quick_test.png
