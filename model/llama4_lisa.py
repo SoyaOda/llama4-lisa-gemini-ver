@@ -18,6 +18,7 @@ from model.losses import CompositeLoss  # 統一された損失関数
 from utils.constants import DEFAULT_SEG_TOKEN
 from torchvision import transforms
 from PIL import Image
+import config_linux
 
 class MultiModalProjector(nn.Module):
     """マルチモーダルプロジェクタ: Llama4隠れ状態 → SAM埋め込み変換"""
@@ -77,7 +78,17 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
 
         # 1. Llama-4マルチモーダルモデルの初期化（成功した単独モデル準拠設定）
         print(f"Llama-4モデルをロード中... ({config.llama_model_id})")
-        print(f"  - アテンション実装: {config.attn_implementation}")
+        
+        # アテンション実装の選択（2025年1月バグ状況に基づく）
+        attn_implementation = config.attn_implementation
+        print(f"  - アテンション実装: {attn_implementation}")
+        
+        # 既知のバグ情報を表示
+        if attn_implementation == "flex_attention":
+            print("    ⚠️ 警告: flex_attentionは現在TypeErrorバグあり（Issue #37352）")
+        elif attn_implementation == "eager":
+            print("    ⚠️ 警告: eagerはcausal mask形状バグあり（Issue #37322）")
+        
         print(f"  - デバイスマップ: {config.device_map}")
         print(f"  - Torch精度: {config.torch_dtype}")
         
@@ -127,7 +138,7 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             init_kwargs = {
                 "quantization_config": quantization_config,
                 "torch_dtype": torch_dtype,
-                "attn_implementation": config.attn_implementation,  # eager設定を使用
+                "attn_implementation": attn_implementation,  # フォールバック処理済みの値を使用
                 "trust_remote_code": True,
                 "low_cpu_mem_usage": getattr(config, 'low_cpu_mem_usage', True),  # メモリ最適化
                 "use_safetensors": True  # safetensorsを優先的に使用
@@ -170,16 +181,29 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             if hasattr(self.llama_model, 'hf_device_map'):
                 print(f"  - デバイス分散: {self.llama_model.hf_device_map}")
             
+            
         except Exception as e:
             print(f"❌ Llama4モデル初期化エラー: {e}")
             raise
         
-        # 1.1 モデル本体のパラメータを完全凍結（LoRA微調整の下準備）
-        print("Llama4モデルのパラメータを全て凍結中...")
-        for param in self.llama_model.parameters():
-            param.requires_grad = False
-        # Note: Embedding層とLMヘッドも凍結（LoRAで効率的に学習するため）
-        # この時点ではSEGトークン追加に備えて凍結解除はしない
+        # 1.1 edit_config.md推奨: vision_towerとmm_projectorのみを凍結
+        print("Vision towerとmm_projectorのパラメータを凍結中...")
+        
+        # Vision tower（CLIPエンコーダ）を凍結
+        if hasattr(self.llama_model, 'vision_model'):
+            for param in self.llama_model.vision_model.parameters():
+                param.requires_grad = False
+            print("✅ Vision towerを凍結しました")
+        
+        # Multi-modal projector（mm_projector）を凍結  
+        if hasattr(self.llama_model, 'multi_modal_projector'):
+            for param in self.llama_model.multi_modal_projector.parameters():
+                param.requires_grad = False
+            print("✅ Multi-modal projectorを凍結しました")
+        
+        # 言語モデル部分は凍結しない（LoRAで学習）
+        # edit_config.md: "言語モデルのすべての線形層にLoRAアダプタを適用"
+        print("✅ 言語モデル部分はLoRAで学習可能に設定")
         
         print("✅ Llama4モデルのパラメータ凍結が完了しました")
         
@@ -337,11 +361,8 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
 
         # 7. 統一された損失関数の初期化
         print("CompositeLoss損失関数を初期化中...")
-        self.loss_fn = CompositeLoss(
-            ce_loss_weight=1.0,    # テキスト生成損失の重み
-            dice_loss_weight=0.5,  # DICE損失の重み
-            bce_loss_weight=2.0    # BCE損失の重み
-        )
+        # config_linuxのデフォルト値を使用（CompositeLoss内で自動取得）
+        self.loss_fn = CompositeLoss()
         print("✅ CompositeLoss損失関数の初期化が完了しました")
 
         # 8. 便利のため設定値を保存
@@ -1072,6 +1093,7 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             "logits": outputs.logits,
             "hidden_states": outputs.hidden_states
         }
+        
         # 3. SEGトークンが出現したらマスク生成
         if generate_mask and self.sam_model is not None:
             input_ids = llama_inputs.get("input_ids")
@@ -1134,6 +1156,7 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             image_embeddings = self.sam_model.image_encoder(sam_pixel_values)
         
         # 2. Llama-4で純粋なテキスト処理（画像なし）
+            
         outputs = self.llama_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -1147,6 +1170,7 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
             "logits": outputs.logits,
             "hidden_states": outputs.hidden_states
         }
+        
         # 3. SEGトークン検出とマスク生成
         if generate_mask and self.sam_model is not None:
             seg_positions = self._detect_seg_tokens(input_ids)

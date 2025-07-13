@@ -186,10 +186,11 @@ def main():
                 self.device_map = "auto"               # 🔧 autoで強制分散（balancedから変更）
                 self.torch_dtype = config_linux.TORCH_DTYPE
                 
-                # 損失重み設定
-                self.ce_loss_weight = 1.0
-                self.dice_loss_weight = 0.5
-                self.bce_loss_weight = 2.0
+                # 損失重み設定（config_linuxから取得）
+                loss_config = config_linux.get_loss_config()
+                self.ce_loss_weight = loss_config['ce_loss_weight']
+                self.dice_loss_weight = loss_config['dice_loss_weight']
+                self.bce_loss_weight = loss_config['bce_loss_weight']
                 self.datasets = ['reason_seg']  # テスト用
                 self.sample_rate = 1  # メモリ制約を考慮
         

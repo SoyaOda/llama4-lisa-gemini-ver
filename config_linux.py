@@ -46,8 +46,9 @@ USE_SAFETENSORS = True  # safetensors形式を優先的に使用
 SAFETENSORS_MODEL_PATH = "./models/llama4-scout-safetensors"  # 変換済みモデルパス
 LOW_CPU_MEM_USAGE = True  # CPU→GPU転送を最適化（メモリ使用量削減）
 
-# Llama-4-Scout-17B-16E-Instruct設定（テストスクリプト実使用値）
-ATTN_IMPLEMENTATION = "eager"           # flex_attentionバグ回避（実証済み）
+# Llama-4-Scout-17B-16E-Instruct設定（2025年1月最新バグ回避）
+ATTN_IMPLEMENTATION = "sdpa"  # 最も安定（flex_attentionバグ回避、Issue #37352）
+# 注: flex_attentionは推奨だがTypeErrorバグあり、eagerもcausal maskバグあり（Issue #37322）
 DEVICE_MAP = "auto"                     # GPU自動分散（実使用値）
 TORCH_DTYPE = "bfloat16"               # 推奨精度（実使用値）
 
@@ -62,42 +63,60 @@ MODEL_MAX_LENGTH = 131072              # Llama4最大コンテキスト長（128
 SEG_TOKEN = "[SEG]"
 
 # ==============================================================================
-# 3. LoRA（PEFT）設定（2024年最適化推奨値）
+# 3. LoRA（PEFT）設定（edit_config2.md推奨値：MoE最適化）
 # ==============================================================================
-LORA_R = 64                            # LoRAランク（2024年推奨：大型マルチモーダルモデル用）
-LORA_ALPHA = 128                       # LoRAアルファ（2024年推奨：2:1 ratio）
-LORA_DROPOUT = 0.05                    # LoRAドロップアウト（維持）
+LORA_R = 64                            # LoRAランク（edit_config2.md推奨：MoEモデル用）
+LORA_ALPHA = 128                       # LoRAアルファ（edit_config2.md推奨：2 * r）
+LORA_DROPOUT = 0.05                    # LoRAドロップアウト（edit_config2.md推奨）
 
-# ターゲットモジュール（2024年推奨：全線形層ターゲット）
-LORA_TARGET_MODULES = "all"            # 全線形層をターゲット（LlamaFactory推奨設定）
-# 従来設定（参考用）:
-# LORA_TARGET_MODULES = [
-#     "q_proj", "k_proj", "v_proj", "o_proj",  # Attention層
-#     "gate_proj", "up_proj", "down_proj"      # FFN層
-# ]
+# ターゲットモジュール（edit_config.md推奨：全主要線形層）
+LORA_TARGET_MODULES = [
+    "q_proj", "k_proj", "v_proj", "o_proj",  # Attention層（必須）
+    "gate_proj", "up_proj", "down_proj"      # FFN層（必須）
+]
+# 注: lm_headとembed_tokensは後で個別に凍結解除（edit_config.md推奨）
+
+# 追加学習可能パラメータ（edit_config.md推奨）
+ADDITIONAL_TRAINABLE_PARAMS = [
+    "lm_head",           # 言語モデルヘッド
+    "embed_tokens",      # トークン埋め込み層
+    "mask_decoder",      # SAMマスクデコーダー
+    "projector",         # マルチモーダルプロジェクター
+    "text_hidden_fcs"    # テキスト隠れ層（互換性のため）
+]
 
 # ==============================================================================
-# 4. 学習・最適化設定（A100 80GB × 8GPU最適化）
+# 4. 学習・最適化設定（edit_config.md推奨値 + A100 80GB × 8GPU最適化）
 # ==============================================================================
-# 基本学習設定（2024年推奨値）
-LEARNING_RATE = 2e-4                   # AdamW学習率（2024年LoRA標準）
-WEIGHT_DECAY = 1e-2                    # 重み減衰（維持）
+# 基本学習設定（edit_config2.md推奨値：MoE最適化）
+LEARNING_RATE = 1e-4                   # AdamW学習率（edit_config2.md推奨：1e-4〜2e-4）
+WEIGHT_DECAY = 5e-2                    # 重み減衰（edit_config.md: 0.05推奨）
 BETA1 = 0.9                            # Adam beta1（維持）
-BETA2 = 0.95                           # Adam beta2（維持）
+BETA2 = 0.999                          # Adam beta2（edit_config.md推奨）
 
-# エポック・ステップ設定
-EPOCHS = 10                            # デフォルトエポック数
+# エポック・ステップ設定（edit_config.md推奨）
+EPOCHS = 2                             # デフォルトエポック数（1-3エポック推奨）
 STEPS_PER_EPOCH = 500                  # ステップ/エポック
+WARMUP_RATIO = 0.03                    # ウォームアップ比率（全ステップの3%）
+LR_SCHEDULER_TYPE = "cosine"           # 学習率スケジューラタイプ（コサイン減衰）
 
-# バッチサイズ・勾配設定（A100 80GB × 8GPU最適化）
-BATCH_SIZE_PER_GPU = 2                 # GPU単位バッチサイズ（A100 80GB最適化）
-GRADIENT_ACCUMULATION_STEPS = 8        # 勾配蓄積ステップ数（維持）
-# 実効バッチサイズ = 2 × 8 × 8GPU = 128（従来64から倍増）
+# バッチサイズ・勾配設定（edit_config.md推奨：有効バッチサイズ64-128）
+BATCH_SIZE_PER_GPU = 1                 # GPU単位バッチサイズ（17Bモデル用）
+GRADIENT_ACCUMULATION_STEPS = 16       # 勾配蓄積ステップ数
+# 実効バッチサイズ = 1 × 16 × 8GPU = 128（edit_config.md推奨範囲内）
 
 # システム最適化設定
 MIXED_PRECISION = True                 # BF16混合精度学習
 GRADIENT_CHECKPOINTING = True          # メモリ効率化勾配チェックポイント
 DATALOADER_NUM_WORKERS = 4             # データローダワーカー数
+GRADIENT_CLIP_NORM = 1.0              # 勾配クリッピングノルム（edit_config.md推奨）
+USE_8BIT_ADAM = True                   # 8bit AdamWオプティマイザ使用（メモリ25%削減）
+OPTIM_TYPE = "paged_adamw_32bit"       # edit_config.md推奨: QLoRA使用時のメモリ効率オプティマイザ
+
+# 損失関数設定（edit_config2.md推奨値：LISA原著準拠）
+CE_LOSS_WEIGHT = 1.0                   # テキスト生成損失の重み（λtxt）
+DICE_LOSS_WEIGHT = 0.5                 # DICE損失の重み（LISA原著準拠）
+BCE_LOSS_WEIGHT = 2.0                  # BCE損失の重み（LISA原著準拠）
 
 # 推論設定
 MAX_NEW_TOKENS = 100                   # 生成時最大新規トークン数
@@ -152,33 +171,19 @@ def get_lisa_model_config() -> Dict[str, Any]:
 
 def get_lora_config() -> Dict[str, Any]:
     """
-    LoRA設定取得
+    LoRA設定取得（edit_config.md推奨値準拠）
     
     Returns:
         Dict: LoraConfig用設定辞書
     """
-    # target_modules の処理：文字列"all"の場合とリストの場合に対応
-    if LORA_TARGET_MODULES == "all":
-        # PEFTライブラリでは"all"は直接サポートされていないため、
-        # 主要な線形層を明示的に指定
-        target_modules = [
-            # Attention プロジェクション層
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            # FFN プロジェクション層  
-            "gate_proj", "up_proj", "down_proj",
-            # 追加の線形層（全線形層ターゲットのため）
-            "lm_head", "embed_tokens"
-        ]
-    else:
-        target_modules = LORA_TARGET_MODULES
-    
     return {
         "r": LORA_R,
         "lora_alpha": LORA_ALPHA,
         "lora_dropout": LORA_DROPOUT,
-        "target_modules": target_modules,
-        "bias": "none",
-        "use_rslora": False
+        "target_modules": LORA_TARGET_MODULES,  # q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+        "bias": "none",                         # edit_config.md推奨
+        "use_rslora": False,                    # r>=64や不安定性が見られる場合にTrue
+        "task_type": "CAUSAL_LM"                # タスクタイプを明示的に指定
     }
 
 def get_training_config() -> Dict[str, Any]:
@@ -199,9 +204,27 @@ def get_training_config() -> Dict[str, Any]:
         "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
         "mixed_precision": MIXED_PRECISION,
         "gradient_checkpointing": GRADIENT_CHECKPOINTING,
+        "gradient_clip_norm": GRADIENT_CLIP_NORM,
+        "use_8bit_adam": USE_8BIT_ADAM,
+        "optim_type": OPTIM_TYPE,
+        "warmup_ratio": WARMUP_RATIO,
+        "lr_scheduler_type": LR_SCHEDULER_TYPE,
         "dataloader_num_workers": DATALOADER_NUM_WORKERS,
         "max_new_tokens": MAX_NEW_TOKENS,
         "quantization_config": QUANTIZATION_CONFIG,
+    }
+
+def get_loss_config() -> Dict[str, float]:
+    """
+    損失関数設定取得
+    
+    Returns:
+        Dict: 損失関数の重み設定
+    """
+    return {
+        "ce_loss_weight": CE_LOSS_WEIGHT,
+        "dice_loss_weight": DICE_LOSS_WEIGHT,
+        "bce_loss_weight": BCE_LOSS_WEIGHT,
     }
 
 def get_quantization_config() -> Dict[str, Any]:

@@ -210,10 +210,13 @@ def apply_lora_config(model, args, logger):
             logger.warning("⚠️ device_mapが見つかりません。Model Parallelismが未設定の可能性があります。")
         
         # LoRA設定作成（config_linux統一設定を使用）
+        lora_config_dict = config_linux.get_lora_config()
+        # task_typeを文字列から除外（後でenumとして設定）
+        lora_config_dict.pop('task_type', None)
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             inference_mode=False,
-            **config_linux.get_lora_config()
+            **lora_config_dict
         )
         
         # LoRA適用
@@ -288,6 +291,30 @@ def apply_lora_config(model, args, logger):
         logger.info(f"  - 学習可能パラメータ: {trainable_params:,}")
         logger.info(f"  - 全パラメータ: {total_params:,}")
         logger.info(f"  - 学習可能割合: {100 * trainable_params / total_params:.3f}%")
+        
+        # config_linux.ADDITIONAL_TRAINABLE_PARAMSで指定されたパラメータを学習可能に
+        logger.info("=== 追加学習可能パラメータの凍結解除（config_linux設定） ===")
+        unfrozen_count = 0
+        additional_params = config_linux.ADDITIONAL_TRAINABLE_PARAMS
+        for name, param in model.named_parameters():
+            # config_linuxで指定された追加学習対象
+            if any([x in name for x in additional_params]):
+                if not param.requires_grad:
+                    # 浮動小数点型のテンソルのみrequires_gradを設定可能
+                    if param.dtype.is_floating_point or param.dtype.is_complex:
+                        param.requires_grad = True
+                        unfrozen_count += 1
+                        logger.info(f"  ✅ {name} を学習可能に設定 (shape: {param.shape})")
+                    else:
+                        logger.info(f"  ⚠️ {name} はdtype={param.dtype}のためスキップ")
+        
+        logger.info(f"✓ 追加で{unfrozen_count}個のパラメータを学習可能に設定")
+        
+        # 最終的な学習可能パラメータ数を再計算
+        final_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        final_total_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"✓ 最終学習可能パラメータ: {final_trainable_params:,}")
+        logger.info(f"✓ 最終学習可能割合: {100 * final_trainable_params / final_total_params:.3f}%")
         
         # 最終device_map確認
         verify_device_map_after_lora(model, logger)
@@ -708,13 +735,13 @@ def main():
                         help="8bit AdamWオプティマイザを使用（メモリ25%%削減）")
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True,
                         help="Gradient Checkpointingを有効化（メモリ30%%削減）")
-    parser.add_argument("--lr", type=float, default=2e-4, help="学習率（2e-4推奨）")
-    parser.add_argument("--clip_grad_norm", type=float, default=0.5, help="勾配クリッピング（0.5推奨）")
-    parser.add_argument("--workers", type=int, default=8, help="データローダーワーカー数")
+    parser.add_argument("--lr", type=float, default=config_linux.LEARNING_RATE, help="学習率（edit_config.md推奨: 2e-4）")
+    parser.add_argument("--clip_grad_norm", type=float, default=config_linux.GRADIENT_CLIP_NORM, help="勾配クリッピング（edit_config.md推奨: 1.0）")
+    parser.add_argument("--workers", type=int, default=config_linux.DATALOADER_NUM_WORKERS, help="データローダーワーカー数")
     parser.add_argument("--print_freq", type=int, default=10, help="ログ出力頻度")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=16,
-                        help="勾配累積ステップ数（実効バッチサイズ16-24推奨）")
-    parser.add_argument("--weight_decay", type=float, default=0.05, help="重み減衰")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=config_linux.GRADIENT_ACCUMULATION_STEPS,
+                        help="勾配累積ステップ数（edit_config.md推奨: 16で実効バッチサイズ64-128）")
+    parser.add_argument("--weight_decay", type=float, default=config_linux.WEIGHT_DECAY, help="重み減衰（edit_config.md推奨: 0.05）")
     parser.add_argument("--save_freq", type=int, default=1, help="チェックポイント保存頻度")
     parser.add_argument("--steps_per_epoch", type=int, default=None, help="エポックあたりのステップ数（制限）")
     
@@ -766,8 +793,14 @@ def main():
         # 学習可能パラメータのみ対象
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         
+        # Model Parallelism環境では8bit Adamは使用不可（GPU間でパラメータが分散するため）
+        is_model_parallel = hasattr(model, 'hf_device_map') or \
+                           (hasattr(model, 'base_model') and hasattr(model.base_model, 'hf_device_map')) or \
+                           (hasattr(model, 'base_model') and hasattr(model.base_model, 'llama_model') and 
+                            hasattr(model.base_model.llama_model, 'hf_device_map'))
+        
         # 8bit optimizer使用（メモリ効率化）
-        if BITSANDBYTES_AVAILABLE and args.use_8bit_adam:
+        if BITSANDBYTES_AVAILABLE and args.use_8bit_adam and not is_model_parallel:
             logging.info("✅ 8bit AdamWオプティマイザーを使用（メモリ25%削減）")
             optimizer = bnb.optim.AdamW8bit(
                 trainable_params,
@@ -776,7 +809,9 @@ def main():
                 betas=(0.9, 0.999)
             )
         else:
-            if args.use_8bit_adam:
+            if args.use_8bit_adam and is_model_parallel:
+                logging.info("📌 Model Parallelism検出: 標準AdamWを使用（8bit Adamは非互換）")
+            elif args.use_8bit_adam:
                 logging.warning("⚠️ bitsandbytesが利用できません。標準AdamWを使用します。")
             optimizer = optim.AdamW(
                 trainable_params,
@@ -789,13 +824,15 @@ def main():
         if args.steps_per_epoch:
             total_steps = args.steps_per_epoch * args.epochs
             
-        # 学習率スケジューラー（コサインスケジュール推奨）
+        # 学習率スケジューラー（config_linux設定使用）
+        training_config = config_linux.get_training_config()
+        warmup_steps = int(training_config["warmup_ratio"] * total_steps)
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=min(300, int(0.03 * total_steps)),  # 3%または300ステップ
+            num_warmup_steps=warmup_steps,
             num_training_steps=total_steps
         )
-        logging.info(f"✅ コサインスケジューラー設定（warmup: {min(300, int(0.03 * total_steps))}ステップ）")
+        logging.info(f"✅ {training_config['lr_scheduler_type']}スケジューラー設定（warmup: {warmup_steps}ステップ = 全体の{training_config['warmup_ratio']*100:.0f}%）")
         
         
         logger.info(f"✓ オプティマイザー設定完了: 学習可能パラメータ={len(trainable_params):,}")

@@ -2,6 +2,7 @@
 LISA-Gemma3 モデルの損失関数モジュール
 """
 
+import os
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -191,14 +192,33 @@ class CompositeLoss(nn.Module):
     
     def __init__(
         self,
-        ce_loss_weight: float = 1.0,
-        dice_loss_weight: float = 0.5,
-        bce_loss_weight: float = 2.0,
+        ce_loss_weight: float = None,
+        dice_loss_weight: float = None,
+        bce_loss_weight: float = None,
     ):
+        """
+        Args:
+            ce_loss_weight: テキスト生成損失の重み（Noneの場合config_linuxから取得）
+            dice_loss_weight: DICE損失の重み（Noneの場合config_linuxから取得）
+            bce_loss_weight: BCE損失の重み（Noneの場合config_linuxから取得）
+        """
         super().__init__()
-        self.ce_loss_weight = ce_loss_weight
-        self.dice_loss_weight = dice_loss_weight
-        self.bce_loss_weight = bce_loss_weight
+        
+        # config_linuxから設定を取得（引数で上書き可能）
+        try:
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            import config_linux
+            loss_config = config_linux.get_loss_config()
+            
+            self.ce_loss_weight = ce_loss_weight if ce_loss_weight is not None else loss_config['ce_loss_weight']
+            self.dice_loss_weight = dice_loss_weight if dice_loss_weight is not None else loss_config['dice_loss_weight']
+            self.bce_loss_weight = bce_loss_weight if bce_loss_weight is not None else loss_config['bce_loss_weight']
+        except ImportError:
+            # config_linuxが読み込めない場合はデフォルト値を使用
+            self.ce_loss_weight = ce_loss_weight if ce_loss_weight is not None else 1.0
+            self.dice_loss_weight = dice_loss_weight if dice_loss_weight is not None else 0.5
+            self.bce_loss_weight = bce_loss_weight if bce_loss_weight is not None else 2.0
         
         # 損失関数の初期化
         self.dice_loss = DiceLoss()
@@ -388,18 +408,22 @@ class CompositeLoss(nn.Module):
             losses["seg_loss"] = torch.zeros(1, device=device, requires_grad=True).squeeze()
             print(f"  ⚠️ seg_loss: N/A (マスクデータなし)")
         
+        
         # Original-LISA方式の総損失計算: ce_loss + mask_loss
-        if ce_loss is not None and mask_loss is not None:
-            total_loss = ce_loss + mask_loss
-            print(f"  🔍 total_loss = lm_loss + seg_loss: {total_loss.item():.6f}")
-        elif ce_loss is not None:
-            total_loss = ce_loss
-            print(f"  🔍 total_loss = lm_loss only: {total_loss.item():.6f}")
-        elif mask_loss is not None:
-            total_loss = mask_loss
-            print(f"  🔍 total_loss = seg_loss only: {total_loss.item():.6f}")
+        total_loss = torch.zeros(1, device=device, requires_grad=True).squeeze()
+        loss_components = []
+        
+        if ce_loss is not None:
+            total_loss = total_loss + ce_loss
+            loss_components.append("lm_loss")
+        
+        if mask_loss is not None:
+            total_loss = total_loss + mask_loss
+            loss_components.append("seg_loss")
+        
+        if loss_components:
+            print(f"  🔍 total_loss = {' + '.join(loss_components)}: {total_loss.item():.6f}")
         else:
-            total_loss = torch.zeros(1, device=device, requires_grad=True).squeeze()
             print(f"  ⚠️ どの損失も計算されませんでした")
         
         losses["total_loss"] = total_loss
