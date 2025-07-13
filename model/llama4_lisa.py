@@ -1150,6 +1150,8 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
         # 3. SEGトークン検出とマスク生成
         if generate_mask and self.sam_model is not None:
             seg_positions = self._detect_seg_tokens(input_ids)
+            print(f"🔍 [DEBUG] generate_mask: {generate_mask}, sam_model is not None: {self.sam_model is not None}")
+            print(f"🔍 [DEBUG] seg_positions: {seg_positions}")
             if len(seg_positions[0]) > 0:
                 print(f"バッチ内SEGトークン数: {len(seg_positions[0])}")
                 
@@ -1237,36 +1239,40 @@ class LisaLlama4ForCausalLM(PreTrainedModel):
                         predicted_masks.append(mask)
                 
                 # 複数のマスクをスタック（各マスクは256x256）
+                print(f"🔍 [DEBUG] predicted_masks list length: {len(predicted_masks)}")
                 if predicted_masks:
                     results["predicted_masks"] = torch.stack(predicted_masks)  # (N, 256, 256)
+                    print(f"🔍 [DEBUG] stacked predicted_masks shape: {results['predicted_masks'].shape}")
                 else:
                     results["predicted_masks"] = None
+                    print(f"🔍 [DEBUG] predicted_masks is empty")
             else:
                 results["predicted_masks"] = None
+                print(f"🔍 [DEBUG] No SEG tokens found in batch")
         else:
             results["predicted_masks"] = None
+            print(f"🔍 [DEBUG] generate_mask is False or sam_model is None")
         
-        # 6. 損失計算
-        losses = {}
+        # 6. CompositeLoss統一損失関数を使用
+        # デバッグ: 入力の確認
+        print(f"🔍 [DEBUG] results.keys(): {list(results.keys())}")
+        print(f"🔍 [DEBUG] predicted_masks is None: {results.get('predicted_masks') is None}")
+        if results.get('predicted_masks') is not None:
+            print(f"🔍 [DEBUG] predicted_masks shape: {results['predicted_masks'].shape}")
+        print(f"🔍 [DEBUG] ground_truth_masks type: {type(ground_truth_masks)}")
+        if ground_truth_masks is not None:
+            print(f"🔍 [DEBUG] ground_truth_masks length: {len(ground_truth_masks) if isinstance(ground_truth_masks, list) else 'not a list'}")
+            if isinstance(ground_truth_masks, list) and len(ground_truth_masks) > 0:
+                print(f"🔍 [DEBUG] first mask shape: {ground_truth_masks[0].shape if hasattr(ground_truth_masks[0], 'shape') else type(ground_truth_masks[0])}")
         
-        # 言語モデリング損失
-        if outputs.loss is not None:
-            losses['lm_loss'] = outputs.loss
+        batch_data = {
+            'labels': labels,
+            'ground_truth_mask': ground_truth_masks,
+            'ground_truth_masks': ground_truth_masks,  # 両方サポート
+        }
         
-        # セグメンテーション損失
-        if results["predicted_masks"] is not None and ground_truth_masks is not None:
-            # マスクのリサイズ処理を追加
-            seg_loss = self._compute_segmentation_loss(
-                results["predicted_masks"], ground_truth_masks, 
-                sam_input_size=(self.sam_image_size, self.sam_image_size),
-                original_sizes=original_sizes
-            )
-            losses['seg_loss'] = seg_loss
-            
-            # 総損失
-            losses['total_loss'] = losses.get('lm_loss', 0) + losses.get('seg_loss', 0)
-        else:
-            losses['total_loss'] = losses.get('lm_loss', 0)
+        # CompositeLoss統一損失関数で詳細な損失計算
+        losses = self.loss_fn(results, batch_data)
         
         results['losses'] = losses
         

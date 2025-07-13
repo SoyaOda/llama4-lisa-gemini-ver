@@ -112,6 +112,32 @@ class DiceLoss(nn.Module):
         return dice_loss.mean()
 
 
+class FocalLoss(nn.Module):
+    """Focal Loss - クラス不均衡に強い損失関数"""
+    
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Focal Loss計算
+        FL(pt) = -α(1-pt)^γ log(pt)
+        """
+        # シグモイドを適用して確率に変換
+        p = torch.sigmoid(pred)
+        
+        # 正解クラスの確率
+        pt = p * target + (1 - p) * (1 - target)
+        
+        # Focal Loss計算
+        focal_weight = (1 - pt) ** self.gamma
+        focal_loss = -self.alpha * focal_weight * torch.log(pt + 1e-8)
+        
+        return focal_loss.mean()
+
+
 class BCELoss(nn.Module):
     """Binary Cross Entropy損失の実装"""
     
@@ -252,14 +278,70 @@ class CompositeLoss(nn.Module):
         
         # 2. セグメンテーション損失
         mask_loss = None
-        # pred_masksとpredicted_masksの両方をチェック
-        predicted_masks = model_outputs.get("predicted_masks") or model_outputs.get("pred_masks")
-        ground_truth_mask = batch.get("ground_truth_mask") or batch.get("ground_truth_masks")
+        # pred_masksとpredicted_masksの両方をチェック（Tensorの論理演算を回避）
+        predicted_masks = model_outputs.get("predicted_masks")
+        if predicted_masks is None:
+            predicted_masks = model_outputs.get("pred_masks")
+        
+        ground_truth_mask = batch.get("ground_truth_mask")
+        if ground_truth_mask is None:
+            ground_truth_mask = batch.get("ground_truth_masks")
         
         if predicted_masks is not None and ground_truth_mask is not None:
+            print(f"  🔍 [CompositeLoss] predicted_masks shape: {predicted_masks.shape}")
+            print(f"  🔍 [CompositeLoss] ground_truth_mask type: {type(ground_truth_mask)}")
+            if isinstance(ground_truth_mask, list):
+                print(f"  🔍 [CompositeLoss] ground_truth_mask is list, length: {len(ground_truth_mask)}")
+                if len(ground_truth_mask) > 0:
+                    print(f"  🔍 [CompositeLoss] first mask type: {type(ground_truth_mask[0])}")
+            
             # デバイス一致の確保：ground_truth_maskをpredicted_masksと同じデバイスに移動
             target_device = predicted_masks.device
-            ground_truth_mask = ground_truth_mask.to(target_device)
+            
+            # ground_truth_maskがリストの場合、各要素を処理
+            if isinstance(ground_truth_mask, list):
+                # リストの各マスクをデバイスに移動
+                ground_truth_mask_tensors = []
+                for mask in ground_truth_mask:
+                    if isinstance(mask, torch.Tensor):
+                        ground_truth_mask_tensors.append(mask.to(target_device))
+                    else:
+                        print(f"  ⚠️ [CompositeLoss] スキップ: マスクがTensorではありません: {type(mask)}")
+                
+                # 1つのテンソルにまとめる（バッチ処理用）
+                if ground_truth_mask_tensors:
+                    # すべてのマスクを同じサイズにリサイズしてからスタック
+                    # predicted_masksのサイズに合わせる (256, 256)
+                    pred_h, pred_w = predicted_masks.shape[-2:]
+                    resized_masks = []
+                    for mask in ground_truth_mask_tensors:
+                        # マスクの次元を確認
+                        if mask.dim() == 3 and mask.shape[0] == 3:
+                            # RGBマスクの場合、グレースケールに変換
+                            mask = mask.mean(dim=0, keepdim=True)
+                        elif mask.dim() == 2:
+                            # 2Dマスクの場合、チャンネル次元を追加
+                            mask = mask.unsqueeze(0)
+                        
+                        # リサイズ
+                        mask_resized = F.interpolate(
+                            mask.unsqueeze(0),  # バッチ次元を追加
+                            size=(pred_h, pred_w),
+                            mode='bilinear',
+                            align_corners=False
+                        ).squeeze(0)  # バッチ次元を削除
+                        
+                        resized_masks.append(mask_resized)
+                    
+                    # スタック
+                    ground_truth_mask = torch.stack(resized_masks)  # (N, 1, H, W)
+                    ground_truth_mask = ground_truth_mask.squeeze(1)  # (N, H, W)
+                else:
+                    print(f"  ⚠️ [CompositeLoss] 有効なマスクがありません")
+                    ground_truth_mask = None
+            else:
+                # Tensorの場合はそのままデバイスに移動
+                ground_truth_mask = ground_truth_mask.to(target_device)
             
             # デバッグ: テンソルサイズを出力（最初の3回のみ）
             if hasattr(self, '_mask_debug_counter'):

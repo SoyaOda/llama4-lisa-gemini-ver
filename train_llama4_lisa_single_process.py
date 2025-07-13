@@ -29,8 +29,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import transformers
-from transformers import AutoProcessor
+from transformers import AutoProcessor, get_cosine_schedule_with_warmup
 from peft import LoraConfig, get_peft_model, TaskType
+try:
+    import bitsandbytes as bnb
+    BITSANDBYTES_AVAILABLE = True
+except ImportError:
+    BITSANDBYTES_AVAILABLE = False
+    logging.warning("bitsandbytes not available. Using standard AdamW optimizer.")
 from PIL import Image
 import matplotlib
 matplotlib.use('Agg')  # バックエンドを非対話モードに設定
@@ -182,7 +188,7 @@ def create_model_and_tokenizer(logger):
         logger.error(f"LISA統合モデル初期化エラー: {e}")
         raise
 
-def apply_lora_config(model, logger):
+def apply_lora_config(model, args, logger):
     """Web調査結果に基づくLoRA設定適用（device_map preservation対応）完全移植版"""
     logger.info("=== LoRA設定適用 ===")
     
@@ -212,6 +218,28 @@ def apply_lora_config(model, logger):
         
         # LoRA適用
         model = get_peft_model(model, lora_config)
+        
+        # Gradient Checkpointing有効化（メモリ30%削減）
+        if args.gradient_checkpointing:
+            logging.info("✅ Gradient Checkpointing有効化試行（メモリ30%削減）")
+            try:
+                # カスタムモデルの場合、内部のllama_modelで有効化を試行
+                if hasattr(model, 'llama_model') and hasattr(model.llama_model, 'gradient_checkpointing_enable'):
+                    model.llama_model.gradient_checkpointing_enable()
+                    logging.info("✅ llama_modelでGradient Checkpointing有効化成功")
+                elif hasattr(model, 'base_model') and hasattr(model.base_model, 'llama_model'):
+                    if hasattr(model.base_model.llama_model, 'gradient_checkpointing_enable'):
+                        model.base_model.llama_model.gradient_checkpointing_enable()
+                        logging.info("✅ base_model.llama_modelでGradient Checkpointing有効化成功")
+                    else:
+                        logging.warning("⚠️ base_model.llama_modelはGradient Checkpointingをサポートしていません")
+                elif hasattr(model, 'gradient_checkpointing_enable'):
+                    model.gradient_checkpointing_enable()
+                    logging.info("✅ 直接Gradient Checkpointing有効化成功")
+                else:
+                    logging.warning("⚠️ Gradient Checkpointingがサポートされていません - スキップ")
+            except Exception as e:
+                logging.warning(f"⚠️ Gradient Checkpointing有効化失敗（スキップ）: {e}")
         
         # device_mapの復元試行（Web調査：PEFT既知問題の対策）成功パターン完全移植
         if original_device_map and original_device_map_location:
@@ -473,7 +501,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, epoch, args, logger, wr
             # シングルエンコーダー構成: pixel_valuesを削除、sam_pixel_valuesのみ使用
             'sam_pixel_values': batch.get('sam_pixel_values'),     # SAM画像入力
             'labels': batch.get('labels'),                         # 実際のラベル使用
-            'ground_truth_masks': batch.get('ground_truth_masks'), # マスク損失計算用（複数形に修正）
+            'ground_truth_masks': batch.get('ground_truth_mask'),  # マスク損失計算用（HybridDatasetは単数形）
             'seg_token_mask': batch.get('seg_token_mask'),         # SEGトークン位置
             'original_sizes': batch.get('original_sizes'),         # 元画像サイズ
             'generate_mask': True  # SAM機能を有効化
@@ -674,10 +702,19 @@ def main():
     parser.add_argument("--exp_name", type=str, required=True, help="実験名")
     parser.add_argument("--batch_size", type=int, default=1, help="バッチサイズ")
     parser.add_argument("--epochs", type=int, default=3, help="エポック数")
-    parser.add_argument("--lr", type=float, default=2e-4, help="学習率")
-    parser.add_argument("--clip_grad_norm", type=float, default=1.0, help="勾配クリッピング")
-    parser.add_argument("--workers", type=int, default=4, help="データローダーワーカー数")
+    
+    # メモリ最適化オプション（新規追加）
+    parser.add_argument("--use_8bit_adam", action="store_true", default=True,
+                        help="8bit AdamWオプティマイザを使用（メモリ25%%削減）")
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=True,
+                        help="Gradient Checkpointingを有効化（メモリ30%%削減）")
+    parser.add_argument("--lr", type=float, default=2e-4, help="学習率（2e-4推奨）")
+    parser.add_argument("--clip_grad_norm", type=float, default=0.5, help="勾配クリッピング（0.5推奨）")
+    parser.add_argument("--workers", type=int, default=8, help="データローダーワーカー数")
     parser.add_argument("--print_freq", type=int, default=10, help="ログ出力頻度")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=16,
+                        help="勾配累積ステップ数（実効バッチサイズ16-24推奨）")
+    parser.add_argument("--weight_decay", type=float, default=0.05, help="重み減衰")
     parser.add_argument("--save_freq", type=int, default=1, help="チェックポイント保存頻度")
     parser.add_argument("--steps_per_epoch", type=int, default=None, help="エポックあたりのステップ数（制限）")
     
@@ -720,7 +757,7 @@ def main():
         
         # モデル初期化
         model = create_model_and_tokenizer(logger)
-        model = apply_lora_config(model, logger)
+        model = apply_lora_config(model, args, logger)
         
         # データセットとデータローダー
         dataset, dataloader = create_dataset_and_dataloader(model, args, logger)
@@ -729,20 +766,37 @@ def main():
         # 学習可能パラメータのみ対象
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         
-        optimizer = optim.AdamW(
-            trainable_params,
-            lr=args.lr,
-            weight_decay=0.01,
-            betas=(0.9, 0.999)
-        )
+        # 8bit optimizer使用（メモリ効率化）
+        if BITSANDBYTES_AVAILABLE and args.use_8bit_adam:
+            logging.info("✅ 8bit AdamWオプティマイザーを使用（メモリ25%削減）")
+            optimizer = bnb.optim.AdamW8bit(
+                trainable_params,
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                betas=(0.9, 0.999)
+            )
+        else:
+            if args.use_8bit_adam:
+                logging.warning("⚠️ bitsandbytesが利用できません。標準AdamWを使用します。")
+            optimizer = optim.AdamW(
+                trainable_params,
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                betas=(0.9, 0.999)
+            )
         
         total_steps = len(dataloader) * args.epochs
         if args.steps_per_epoch:
             total_steps = args.steps_per_epoch * args.epochs
-        
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=total_steps, eta_min=1e-6
+            
+        # 学習率スケジューラー（コサインスケジュール推奨）
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=min(300, int(0.03 * total_steps)),  # 3%または300ステップ
+            num_training_steps=total_steps
         )
+        logging.info(f"✅ コサインスケジューラー設定（warmup: {min(300, int(0.03 * total_steps))}ステップ）")
+        
         
         logger.info(f"✓ オプティマイザー設定完了: 学習可能パラメータ={len(trainable_params):,}")
         
