@@ -258,7 +258,7 @@ class CompositeLoss(nn.Module):
                 break
         
         if device is None:
-            device = torch.device("cpu")
+            device = torch.device("cuda")
         
         # 1. テキスト生成損失
         ce_loss = None

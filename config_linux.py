@@ -59,6 +59,10 @@ LLAMA_IMAGE_SIZE = 448                 # Llama4画像タイルサイズ
 SAM_IMAGE_SIZE = 1024                  # SAMエンコーダ入力サイズ
 MODEL_MAX_LENGTH = 131072              # Llama4最大コンテキスト長（128K）
 
+# セグメンテーション統一サイズ（重要：全テスト・学習で統一）
+SEGMENTATION_MASK_SIZE = 448           # セグメンテーションマスクサイズ（SAM2出力と統一）
+SEGMENTATION_IMAGE_SIZE = 448          # セグメンテーション用画像サイズ（Llamaと統一）
+
 # セグメンテーション特別トークン
 SEG_TOKEN = "[SEG]"
 
@@ -167,6 +171,8 @@ def get_lisa_model_config() -> Dict[str, Any]:
         "attn_implementation": ATTN_IMPLEMENTATION,
         "device_map": DEVICE_MAP,
         "torch_dtype": TORCH_DTYPE,
+        "segmentation_mask_size": SEGMENTATION_MASK_SIZE,
+        "segmentation_image_size": SEGMENTATION_IMAGE_SIZE,
     }
 
 def get_lora_config() -> Dict[str, Any]:
@@ -249,6 +255,23 @@ def get_path_config() -> Dict[str, str]:
         "hf_cache_dir": HF_CACHE_DIR,
         "log_base_dir": LOG_BASE_DIR,
         "weights_dir": WEIGHTS_DIR,
+    }
+
+def get_test_config() -> Dict[str, Any]:
+    """
+    テスト用統一設定取得
+    
+    Returns:
+        Dict: テスト設定辞書
+    """
+    return {
+        "image_size": SEGMENTATION_IMAGE_SIZE,        # 448
+        "mask_size": SEGMENTATION_MASK_SIZE,          # 448
+        "llama_image_size": LLAMA_IMAGE_SIZE,         # 448
+        "sam_image_size": SAM_IMAGE_SIZE,             # 1024
+        "hidden_size": LLAMA_HIDDEN_SIZE,             # 5120
+        "sam_prompt_dim": SAM_PROMPT_EMBED_DIM,       # 256
+        "seg_token": SEG_TOKEN,                       # "[SEG]"
     }
 
 # ==============================================================================

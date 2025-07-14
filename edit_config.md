@@ -44,3 +44,12 @@ training_args = TrainingArguments(
 
 
 
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -c "
+import config_linux
+lora_config = config_linux.get_lora_config()
+print('LoRA設定内容:')
+for k, v in lora_config.items():
+    print(f'  {k}: {v}')
+"
+
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python train_llama4_lisa_single_process.py --exp_name two_epoch_test --epochs 2 --steps_per_epoch 250
