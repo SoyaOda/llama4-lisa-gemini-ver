@@ -55,8 +55,11 @@ class FocalTverskyLoss(nn.Module):
         if target.dim() == 4 and target.size(1) == 1:
             target = target.squeeze(1)
             
-        # Sigmoid適用
+        # Sigmoid適用（データ型保持）
+        original_dtype = pred.dtype
         pred = torch.sigmoid(pred)
+        if pred.dtype != original_dtype:
+            pred = pred.to(dtype=original_dtype)
         
         # フラット化
         pred_flat = pred.view(-1)
@@ -118,27 +121,35 @@ class LovaszSoftmaxLoss(nn.Module):
             pred_flat = pred_flat[valid]
             target_flat = target_flat[valid]
             
-            # Lovász拡張
-            signs = 2.0 * target_flat.float() - 1.0
-            errors = 1.0 - pred_flat * signs
+            # Lovász拡張（データ型保持強化版）
+            target_dtype = pred_flat.dtype
+            # Float32混入防止: 明示的データ型指定
+            signs = (2.0 * target_flat.to(dtype=target_dtype) - 1.0).to(dtype=target_dtype)
+            errors = (1.0 - pred_flat * signs).to(dtype=target_dtype)
             errors_sorted, perm = torch.sort(errors, descending=True)
             gt_sorted = target_flat[perm]
             
-            grad = self._lovasz_grad(gt_sorted)
-            loss = torch.dot(F.relu(errors_sorted), grad)
+            grad = self._lovasz_grad(gt_sorted, target_dtype)
+            # F.reluもFloat32混入の可能性あり
+            relu_errors = F.relu(errors_sorted.float()).to(dtype=target_dtype)
+            loss = torch.dot(relu_errors, grad)
             
             return loss
         else:
             # マルチクラス（今回は使用しないが将来対応）
-            return torch.tensor(0.0, device=pred.device)
+            return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
     
-    def _lovasz_grad(self, gt_sorted: torch.Tensor) -> torch.Tensor:
-        """Lovász勾配計算"""
+    def _lovasz_grad(self, gt_sorted: torch.Tensor, target_dtype: torch.dtype = None) -> torch.Tensor:
+        """Lovász勾配計算（データ型保持強化版）"""
+        if target_dtype is None:
+            target_dtype = gt_sorted.dtype
+            
         p = len(gt_sorted)
-        gts = gt_sorted.sum().float()
-        intersection = gts - gt_sorted.float().cumsum(0)
-        union = gts + (1 - gt_sorted).float().cumsum(0)
-        jaccard = 1.0 - intersection / union
+        gts = gt_sorted.sum().to(dtype=target_dtype)
+        intersection = gts - gt_sorted.to(dtype=target_dtype).cumsum(0)
+        union = gts + (1 - gt_sorted).to(dtype=target_dtype).cumsum(0)
+        # Float32混入防止: 除算結果を明示的にキャスト
+        jaccard = (1.0 - intersection / union).to(dtype=target_dtype)
         
         if p > 1:
             jaccard[1:p] = jaccard[1:p] - jaccard[0:-1]
@@ -185,42 +196,50 @@ class QFormerMultiModalLoss(nn.Module):
         itc_loss = self._compute_itc_loss(query_embeds, text_embeds)
         losses['itc_loss'] = itc_loss
         
-        # 2. ITM Loss (Image-Text Matching)
+        # 2. ITM Loss (Image-Text Matching) - データ型保持
         if itm_logits is not None and itm_labels is not None:
-            itm_loss = F.cross_entropy(itm_logits, itm_labels)
+            target_dtype = query_embeds.dtype
+            itm_loss = F.cross_entropy(itm_logits.float(), itm_labels).to(dtype=target_dtype)
             losses['itm_loss'] = itm_loss * self.itm_weight
         
-        # 3. ITG Loss (Image-Grounded Text Generation)
+        # 3. ITG Loss (Image-Grounded Text Generation) - データ型保持
         if itg_logits is not None and itg_labels is not None:
+            target_dtype = query_embeds.dtype
             itg_loss = F.cross_entropy(
-                itg_logits.view(-1, itg_logits.size(-1)),
+                itg_logits.view(-1, itg_logits.size(-1)).float(),
                 itg_labels.view(-1),
                 ignore_index=-100
-            )
+            ).to(dtype=target_dtype)
             losses['itg_loss'] = itg_loss * self.itg_weight
         
         return losses
     
     def _compute_itc_loss(self, query_embeds: torch.Tensor, text_embeds: torch.Tensor) -> torch.Tensor:
-        """ITC損失計算（対照学習）"""
+        """ITC損失計算（対照学習）- Float32混入防止版"""
+        # データ型保持
+        target_dtype = query_embeds.dtype
+        target_device = query_embeds.device
+        
         # クエリ埋め込みを平均化
         image_feat = query_embeds.mean(dim=1)  # (B, hidden_size)
         text_feat = text_embeds  # (B, hidden_size)
         
-        # 正規化
-        image_feat = F.normalize(image_feat, dim=-1)
-        text_feat = F.normalize(text_feat, dim=-1)
+        # 正規化（データ型保持）
+        image_feat = F.normalize(image_feat.float(), dim=-1).to(dtype=target_dtype)
+        text_feat = F.normalize(text_feat.float(), dim=-1).to(dtype=target_dtype)
         
-        # 類似度行列
+        # 類似度行列（データ型保持）
         sim_matrix = torch.matmul(image_feat, text_feat.t()) / self.temperature
+        if sim_matrix.dtype != target_dtype:
+            sim_matrix = sim_matrix.to(dtype=target_dtype)
         
         # ラベル (対角線が正例)
         batch_size = sim_matrix.size(0)
-        labels = torch.arange(batch_size, device=sim_matrix.device)
+        labels = torch.arange(batch_size, device=target_device, dtype=torch.long)
         
-        # 双方向損失
-        loss_i2t = F.cross_entropy(sim_matrix, labels)
-        loss_t2i = F.cross_entropy(sim_matrix.t(), labels)
+        # 双方向損失（データ型保持）
+        loss_i2t = F.cross_entropy(sim_matrix.float(), labels).to(dtype=target_dtype)
+        loss_t2i = F.cross_entropy(sim_matrix.t().float(), labels).to(dtype=target_dtype)
         
         return (loss_i2t + loss_t2i) / 2.0
 
@@ -270,21 +289,27 @@ class SAM2PromptOptimizationLoss(nn.Module):
         return losses
     
     def _compute_diversity_loss(self, sam_prompts: torch.Tensor) -> torch.Tensor:
-        """プロンプト多様性損失（クエリ間の類似度を下げる）"""
+        """プロンプト多様性損失（クエリ間の類似度を下げる）- Float32混入防止版"""
         batch_size, num_queries, prompt_dim = sam_prompts.shape
+        target_dtype = sam_prompts.dtype
+        target_device = sam_prompts.device
         
-        # 正規化
-        normalized_prompts = F.normalize(sam_prompts, dim=-1)
+        # 正規化（データ型保持）
+        normalized_prompts = F.normalize(sam_prompts.float(), dim=-1).to(dtype=target_dtype)
         
-        # クエリ間類似度行列
+        # クエリ間類似度行列（データ型保持）
         sim_matrix = torch.bmm(normalized_prompts, normalized_prompts.transpose(1, 2))
+        if sim_matrix.dtype != target_dtype:
+            sim_matrix = sim_matrix.to(dtype=target_dtype)
         
-        # 対角線を除去（自己類似度は1で固定）
-        mask = torch.eye(num_queries, device=sam_prompts.device).unsqueeze(0).expand(batch_size, -1, -1)
+        # 対角線を除去（自己類似度は1で固定）- データ型保持
+        mask = torch.eye(num_queries, device=target_device, dtype=target_dtype).unsqueeze(0).expand(batch_size, -1, -1)
         sim_matrix = sim_matrix * (1 - mask)
         
-        # 類似度の2乗平均（多様性を促進）
+        # 類似度の2乗平均（多様性を促進）- データ型保持
         diversity_loss = (sim_matrix ** 2).mean()
+        if diversity_loss.dtype != target_dtype:
+            diversity_loss = diversity_loss.to(dtype=target_dtype)
         
         return diversity_loss
     
@@ -308,26 +333,30 @@ class SAM2PromptOptimizationLoss(nn.Module):
         # 最高IoUクエリを特定
         best_query_indices = iou.argmax(dim=1)
         
-        # 最高性能クエリのプロンプトを強化
-        best_prompts = sam_prompts[torch.arange(batch_size), best_query_indices]
+        # 最高性能クエリのプロンプトを強化（データ型保持）
+        batch_indices = torch.arange(batch_size, device=sam_prompts.device, dtype=torch.long)
+        best_prompts = sam_prompts[batch_indices, best_query_indices]
         
-        # プロンプトの正規化とIoUの相関を促進
+        # プロンプトの正規化とIoUの相関を促進（データ型保持）
         prompt_norms = torch.norm(best_prompts, dim=-1)
-        best_ious = iou[torch.arange(batch_size), best_query_indices]
+        best_ious = iou[batch_indices, best_query_indices]
         
-        # 高IoUクエリは高ノルムプロンプトを持つべき
-        consistency_loss = F.mse_loss(prompt_norms, best_ious)
+        # 高IoUクエリは高ノルムプロンプトを持つべき（データ型保持）
+        consistency_loss = F.mse_loss(prompt_norms.float(), best_ious.float()).to(dtype=sam_prompts.dtype)
         
         return consistency_loss
     
     def _compute_stability_loss(self, sam_prompts: torch.Tensor) -> torch.Tensor:
-        """プロンプト安定性損失（過度な変動を防ぐ）"""
+        """プロンプト安定性損失（過度な変動を防ぐ）- Float32混入防止版"""
+        target_dtype = sam_prompts.dtype
+        target_device = sam_prompts.device
+        
         # プロンプトの標準偏差を制限
         prompt_std = sam_prompts.std(dim=1).mean()
         
-        # 適度な安定性を促進（完全な均一化は避ける）
-        target_std = 0.5
-        stability_loss = F.mse_loss(prompt_std, torch.tensor(target_std, device=sam_prompts.device))
+        # 適度な安定性を促進（完全な均一化は避ける）- データ型保持
+        target_std = torch.tensor(0.5, device=target_device, dtype=target_dtype)
+        stability_loss = F.mse_loss(prompt_std.float(), target_std.float()).to(dtype=target_dtype)
         
         return stability_loss
 
@@ -418,8 +447,46 @@ class CompositeLossQFormerSAM2(nn.Module):
             print(f"  🔄 損失計算: {predicted_masks.dtype} → {target_dtype} 変換")
             predicted_masks = predicted_masks.to(dtype=target_dtype)
         
+        # 2025年ベストプラクティス: 数値安定化 + デバッグ情報
+        print(f"  🔍 デバッグ: predicted_masks統計")
+        print(f"    - Shape: {predicted_masks.shape}")
+        print(f"    - Device: {predicted_masks.device}")
+        print(f"    - Dtype: {predicted_masks.dtype}")
+        print(f"    - Min: {predicted_masks.min().item():.6f}")
+        print(f"    - Max: {predicted_masks.max().item():.6f}")
+        print(f"    - Mean: {predicted_masks.mean().item():.6f}")
+        print(f"    - Std: {predicted_masks.std().item():.6f}")
+        
+        if torch.isnan(predicted_masks).any():
+            nan_count = torch.isnan(predicted_masks).sum().item()
+            print(f"  ⚠️ NaN検出 in predicted_masks: {nan_count}個 -> ゼロ置換")
+            predicted_masks = torch.nan_to_num(predicted_masks, nan=0.0)
+        if torch.isinf(predicted_masks).any():
+            inf_count = torch.isinf(predicted_masks).sum().item()
+            print(f"  ⚠️ Inf検出 in predicted_masks: {inf_count}個 -> クリップ")
+            predicted_masks = torch.clamp(predicted_masks, -10.0, 10.0)
+        
         # デバイス・データ型統一（GPU優先 + BFloat16統一）
         target_masks = target_masks.to(device=target_device, dtype=target_dtype)
+        
+        # target_masksの数値安定化 + デバッグ情報
+        print(f"  🔍 デバッグ: target_masks統計")
+        print(f"    - Shape: {target_masks.shape}")
+        print(f"    - Device: {target_masks.device}")
+        print(f"    - Dtype: {target_masks.dtype}")
+        print(f"    - Min: {target_masks.min().item():.6f}")
+        print(f"    - Max: {target_masks.max().item():.6f}")
+        print(f"    - Mean: {target_masks.mean().item():.6f}")
+        print(f"    - Unique values: {torch.unique(target_masks)[:10]}")
+        
+        if torch.isnan(target_masks).any():
+            nan_count = torch.isnan(target_masks).sum().item()
+            print(f"  ⚠️ NaN検出 in target_masks: {nan_count}個 -> ゼロ置換")
+            target_masks = torch.nan_to_num(target_masks, nan=0.0)
+        if torch.isinf(target_masks).any():
+            inf_count = torch.isinf(target_masks).sum().item()
+            print(f"  ⚠️ Inf検出 in target_masks: {inf_count}個 -> クリップ")
+            target_masks = torch.clamp(target_masks, -10.0, 10.0)
         if query_embeds is not None:
             query_embeds = query_embeds.to(device=target_device, dtype=target_dtype)
         if text_embeds is not None:
@@ -440,44 +507,95 @@ class CompositeLossQFormerSAM2(nn.Module):
             dice_scores = []
             for i in range(num_queries):
                 pred_i = torch.sigmoid(predicted_masks[:, i])
+                # データ型保持
+                if pred_i.dtype != predicted_masks.dtype:
+                    pred_i = pred_i.to(dtype=predicted_masks.dtype)
                 dice_i = 1 - self._compute_dice(pred_i, target_masks)
                 dice_scores.append(dice_i)
             
-            # 最良クエリを選択
+            # 最良クエリを選択（データ型保持）
             dice_scores = torch.stack(dice_scores, dim=0)
             best_idx = dice_scores.argmin(dim=0)
-            best_masks = predicted_masks[torch.arange(predicted_masks.size(0)), best_idx]
+            batch_indices = torch.arange(predicted_masks.size(0), device=predicted_masks.device, dtype=torch.long)
+            best_masks = predicted_masks[batch_indices, best_idx]
         else:
             best_masks = predicted_masks
         
         # Focal Tversky Loss (Web推奨最高性能)
+        print(f"  🔍 Focal Tversky計算中...")
+        print(f"    - best_masks: {best_masks.shape}, {best_masks.dtype}, min={best_masks.min().item():.6f}, max={best_masks.max().item():.6f}")
         focal_tversky_loss = self.focal_tversky(best_masks, target_masks)
+        # Focal Tverskyのデータ型統一
+        if focal_tversky_loss.dtype != target_dtype:
+            focal_tversky_loss = focal_tversky_loss.to(dtype=target_dtype)
+        print(f"    - Focal Tversky Loss: {focal_tversky_loss.item():.6f}")
+        if torch.isnan(focal_tversky_loss) or torch.isinf(focal_tversky_loss):
+            print(f"    ⚠️ Focal Tversky異常値: {focal_tversky_loss.item()}")
         losses['focal_tversky_loss'] = focal_tversky_loss
         total_loss += focal_tversky_loss * self.focal_tversky_weight
+        print(f"    - 累積total_loss: {total_loss.item():.6f}")
         
         # Lovász-Softmax Loss (IoU直接最適化)
+        print(f"  🔍 Lovász計算中...")
+        print(f"    - best_masks入力: {best_masks.shape}, {best_masks.dtype}")
+        print(f"    - target_masks入力: {target_masks.shape}, {target_masks.dtype}")
         lovasz_loss = self.lovasz(best_masks, target_masks)
+        print(f"    - Lovász出力: {lovasz_loss.dtype}, value={lovasz_loss.item():.6f}")
+        # Lovászのデータ型統一
+        if lovasz_loss.dtype != target_dtype:
+            print(f"    - Lovász型変換: {lovasz_loss.dtype} → {target_dtype}")
+            lovasz_loss = lovasz_loss.to(dtype=target_dtype)
         losses['lovasz_loss'] = lovasz_loss
         total_loss += lovasz_loss * self.lovasz_weight
+        print(f"    - 累積total_loss（Lovász後）: {total_loss.item():.6f}")
         
         # Dice Loss (バランス)
-        dice_loss = self.dice(best_masks, target_masks.float())
+        print(f"  🔍 Dice（BCE）計算中...")
+        dice_loss = self.dice(best_masks, target_masks)  # データ型保持
+        print(f"    - BCE出力: {dice_loss.dtype}, value={dice_loss.item():.6f}")
+        # BCEWithLogitsLossのデータ型統一
+        if dice_loss.dtype != target_dtype:
+            print(f"    - BCE型変換: {dice_loss.dtype} → {target_dtype}")
+            dice_loss = dice_loss.to(dtype=target_dtype)
         losses['dice_loss'] = dice_loss
         total_loss += dice_loss * self.dice_weight
+        print(f"    - 累積total_loss（BCE後）: {total_loss.item():.6f}")
         
-        # 2. Stage 1以降: Q-Former マルチモーダル損失
+        # 2. Stage 1以降: Q-Former マルチモーダル損失（データ型統一）
         if self.stage >= 1 and query_embeds is not None and text_embeds is not None:
+            print(f"  🔍 Q-Former損失計算中...")
+            print(f"    - query_embeds: {query_embeds.shape}, {query_embeds.dtype}")
+            print(f"    - text_embeds: {text_embeds.shape}, {text_embeds.dtype}")
             qformer_losses = self.qformer_loss(query_embeds, text_embeds)
             for key, value in qformer_losses.items():
+                print(f"    - {key}: {value.dtype}, value={value.item():.6f}")
+                # データ型統一
+                if value.dtype != target_dtype:
+                    print(f"      🔄 Q-Former {key}型変換: {value.dtype} → {target_dtype}")
+                    value = value.to(dtype=target_dtype)
                 losses[f'qformer_{key}'] = value
                 total_loss += value * self.qformer_weight
+            print(f"    - Q-Former損失後累積total_loss: {total_loss.item():.6f}")
         
-        # 3. Stage 2以降: SAM2プロンプト最適化損失
+        # 3. Stage 2以降: SAM2プロンプト最適化損失（データ型統一）
         if self.stage >= 2 and sam_prompts is not None and predicted_masks.dim() == 4:
+            print(f"  🔍 SAM2プロンプト損失計算中...")
+            print(f"    - sam_prompts: {sam_prompts.shape}, {sam_prompts.dtype}")
             sam2_losses = self.sam2_prompt_loss(sam_prompts, predicted_masks, target_masks)
             for key, value in sam2_losses.items():
+                print(f"    - {key}: {value.dtype}, value={value.item():.6f}")
+                # データ型統一
+                if value.dtype != target_dtype:
+                    print(f"      🔄 SAM2 {key}型変換: {value.dtype} → {target_dtype}")
+                    value = value.to(dtype=target_dtype)
                 losses[f'sam2_{key}'] = value
                 total_loss += value * self.sam2_prompt_weight
+            print(f"    - SAM2損失後累積total_loss: {total_loss.item():.6f}")
+        
+        # 最終损失の数値安定化
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"  ⚠️ total_lossに異常値: {total_loss} -> 1.0で置換")
+            total_loss = torch.tensor(1.0, device=predicted_masks.device, dtype=predicted_masks.dtype)
         
         losses['total_loss'] = total_loss
         return losses
@@ -570,12 +688,12 @@ def test_composite_loss():
     hidden_size = 5120
     prompt_dim = 256
     
-    # ダミーデータ作成
-    predicted_masks = torch.randn(batch_size, num_queries, height, width)
-    target_masks = torch.randint(0, 2, (batch_size, height, width)).float()
-    query_embeds = torch.randn(batch_size, num_queries, hidden_size)
-    text_embeds = torch.randn(batch_size, hidden_size)
-    sam_prompts = torch.randn(batch_size, num_queries, prompt_dim)
+    # ダミーデータ作成（BFloat16統一）
+    predicted_masks = torch.randn(batch_size, num_queries, height, width, dtype=torch.bfloat16)
+    target_masks = torch.randint(0, 2, (batch_size, height, width), dtype=torch.bfloat16)
+    query_embeds = torch.randn(batch_size, num_queries, hidden_size, dtype=torch.bfloat16)
+    text_embeds = torch.randn(batch_size, hidden_size, dtype=torch.bfloat16)
+    sam_prompts = torch.randn(batch_size, num_queries, prompt_dim, dtype=torch.bfloat16)
     
     # 各段階テスト
     for stage in [1, 2, 3]:

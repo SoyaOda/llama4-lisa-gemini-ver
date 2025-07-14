@@ -912,14 +912,29 @@ class QFormerSegmentationBridge(nn.Module):
             
             # SAM2出力の即座データ型変換（Float32 → BFloat16）
             base_dtype = next(self.llama_model.parameters()).dtype
-            if masks.dtype != base_dtype:
-                masks = masks.to(dtype=base_dtype)
+            target_device = next(self.llama_model.parameters()).device
+            
+            # デバイス・データ型を強制統一
+            if masks.dtype != base_dtype or masks.device != target_device:
+                original_dtype = masks.dtype
+                original_device = masks.device
+                masks = masks.to(device=target_device, dtype=base_dtype)
                 if batch_idx == 0:  # 初回のみログ出力
-                    print(f"    🔄 SAM2出力データ型変換: {sam_results['masks'].dtype} → {base_dtype}")
+                    print(f"    🔄 SAM2出力統一: {original_device}:{original_dtype} → {target_device}:{base_dtype}")
+                print(f"    🔍 SAM2出力統計: min={masks.min().item():.6f}, max={masks.max().item():.6f}, mean={masks.mean().item():.6f}")
             
             predicted_masks.append(masks)
         
         predicted_masks = torch.stack(predicted_masks, dim=0)
+        
+        # 最終データ型統一確認（损失関数エラー防止）
+        base_dtype = next(self.llama_model.parameters()).dtype
+        target_device = next(self.llama_model.parameters()).device
+        if predicted_masks.dtype != base_dtype or predicted_masks.device != target_device:
+            print(f"  🔄 最終マスク統一: {predicted_masks.device}:{predicted_masks.dtype} → {target_device}:{base_dtype}")
+            predicted_masks = predicted_masks.to(device=target_device, dtype=base_dtype)
+            print(f"  🔍 最終predicted_masks統計: min={predicted_masks.min().item():.6f}, max={predicted_masks.max().item():.6f}, mean={predicted_masks.mean().item():.6f}")
+            print(f"  🔍 predicted_masks.shape: {predicted_masks.shape}")
         
         # 最終デバイス確認（2025年ベストプラクティス）
         if predicted_masks.device != base_device:
