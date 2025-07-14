@@ -73,6 +73,378 @@ class LlamaQFormerSAM2Config:
         self.seg_token = config_linux.SEG_TOKEN  # "[SEG]"
 
 
+class LlamaQFormerSAM2Model(nn.Module):
+    """
+    【廃止予定 - デバッグ専用】方法4ハイブリッド統合モデル
+    
+    ⚠️ 将来的に方法3 QFormerSegmentationBridgeに完全移行予定
+    デバッグ・比較用途のみでの使用を推奨
+    
+    アーキテクチャフロー:
+    1. Llama-4-Scout: 高度なVLM推論 (text + image → hidden_states)
+    2. Q-Former + SEGトークン: ハイブリッド特徴抽出  
+    3. SAM2: 高精度セグメンテーション (hybrid_prompts → masks)
+    """
+    
+    def __init__(self, config: Optional[LlamaQFormerSAM2Config] = None, debug_mode: bool = True, training_stage: int = 1):
+        super().__init__()
+        
+        self.config = config or LlamaQFormerSAM2Config()
+        self.debug_mode = debug_mode
+        self.training_stage = training_stage
+        
+        if not debug_mode:
+            print("⚠️ 警告: 方法4ハイブリッドモデルは廃止予定です")
+            print("⚠️ 本番環境では QFormerSegmentationBridge (方法3) の使用を推奨")
+            print("⚠️ このモデルはデバッグ用途でのみ使用してください")
+        
+        print("=== 【デバッグ用】方法4ハイブリッド統合モデル初期化 ===")
+        
+        # 1. Llama-4-Scout VLM初期化
+        self._init_llama4_model()
+        
+        # 2. Q-Former初期化（2025年公式API準拠版）
+        self._init_qformer_2025()
+        
+        # 3. SAM2初期化（高精度セグメンテーション）
+        self._init_sam2()
+        
+        # 4. 特別トークン設定（ハイブリッド用）
+        self._setup_special_tokens()
+        
+        print("✅ デバッグ用統合モデル初期化完了")
+        
+    def _init_llama4_model(self):
+        """Llama-4-Scout VLM初期化"""
+        print(f"\n🧠 Llama-4-Scout初期化中...")
+        print(f"  - モデルID: {self.config.llama_model_id}")
+        
+        if not LLAMA4_AVAILABLE:
+            raise ImportError("Llama-4-Scoutが利用できません")
+        
+        try:
+            # 109B Llama-4専用超最適化設定（Web調査ベース）
+            import torch
+            gpu_count = torch.cuda.device_count()
+            print(f"  - 検出GPU数: {gpu_count}")
+            print(f"  - 109Bモデル用最適化設定適用")
+            
+            # Web調査推奨: balanced_low_0 + 4bit量子化
+            if gpu_count >= 2:
+                # GPU0に少なめ、GPU1+に多めのメモリ配分（Web調査ベース）
+                max_memory = {
+                    0: "30GiB",   # GPU0: 推論・処理用に余裕確保
+                    1: "70GiB",   # GPU1: モデル重み主要格納
+                    # GPU専用環境: CPU offload不要
+                }
+                device_map = "balanced_low_0"  # Web推奨設定
+                
+                if gpu_count > 2:
+                    # 3GPU以上の場合
+                    for i in range(2, gpu_count):
+                        max_memory[i] = "70GiB"
+            else:
+                # 1GPU: 4bit量子化でも厳しいが試行
+                max_memory = {0: "70GiB"}  # GPU専用環境
+                device_map = "auto"
+            
+            print(f"  - メモリ設定（109B最適化）: {max_memory}")
+            print(f"  - デバイスマップ: {device_map}")
+            
+            # 4bit量子化（60GB未満に削減、Web調査推奨）
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,                    # 4bit量子化（60GB→<60GB）
+                bnb_4bit_quant_type="nf4",           # NF4量子化（推奨）
+                bnb_4bit_use_double_quant=True,      # ダブル量子化（さらに圧縮）
+                bnb_4bit_compute_dtype=torch.bfloat16, # bfloat16計算（Web推奨）
+                llm_int8_enable_fp32_cpu_offload=True  # CPU offload有効
+            )
+            
+            print(f"  - 量子化: 4bit NF4 + double quant")
+            print(f"  - 計算精度: bfloat16 (float32の50%削減)")
+            
+            # Llama-4-Scout初期化（メモリ最適化）
+            self.llama_model = Llama4ForConditionalGeneration.from_pretrained(
+                self.config.llama_model_id,
+                quantization_config=quantization_config,
+                device_map=device_map,
+                max_memory=max_memory,
+                torch_dtype=getattr(torch, self.config.torch_dtype),
+                attn_implementation=self.config.attn_implementation,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+            
+            # プロセッサ初期化
+            self.llama_processor = AutoProcessor.from_pretrained(
+                self.config.llama_model_id,
+                trust_remote_code=True
+            )
+            
+            print(f"✅ Llama-4-Scout初期化成功")
+            print(f"  - パラメータ数: {sum(p.numel() for p in self.llama_model.parameters()):,}")
+            
+        except Exception as e:
+            print(f"❌ Llama-4-Scout初期化失敗: {e}")
+            raise
+    
+    def _init_qformer_2025(self):
+        """Q-Former初期化（2025年公式API準拠版）"""
+        print(f"\n🔍 Q-Former初期化中（2025年公式API準拠）...")
+        print(f"  - クエリ数: {self.config.qformer_config['num_queries']}")
+        print(f"  - Web調査結果: text_input非対応、query_embeds中心実装")
+        
+        try:
+            # 🔄 公式BLIP-2 Q-Formerを優先使用
+            self.qformer = get_qformer_model(
+                config=self.config.qformer_config,
+                prefer_official=True  # 公式版を優先
+            )
+            
+            print(f"✅ Q-Former初期化成功")
+            print(f"  - パラメータ数: {sum(p.numel() for p in self.qformer.parameters()):,}")
+            print(f"  - API: 2025年公式BLIP-2準拠")
+            
+        except Exception as e:
+            print(f"❌ Q-Former初期化失敗: {e}")
+            raise
+    
+    def _init_sam2(self):
+        """SAM2初期化（高速・高精度セグメンテーション）"""
+        print(f"\n🎯 SAM2初期化中...")
+        
+        try:
+            # 🔄 Meta公式SAM2 (HuggingFace Hub自動取得)
+            self.sam2 = get_sam2_wrapper(
+                model_id=self.config.sam2_model_id,
+                device="auto"
+            )
+            
+            sam2_info = self.sam2.get_model_info()
+            print(f"✅ SAM2初期化成功")
+            print(f"  - モデルタイプ: {sam2_info['model_type']}")
+            print(f"  - パラメータ数: {sam2_info['parameters']:,}")
+            
+        except Exception as e:
+            print(f"❌ SAM2初期化失敗: {e}")
+            raise
+    
+    def _setup_special_tokens(self):
+        """
+        方法4: ハイブリッドアプローチによる特別トークン設定
+        
+        量子化モデル対応のフォールバック戦略:
+        1. 既存トークンの再利用を試行
+        2. 量子化維持のまま新トークン追加を試行  
+        3. 量子化モデルはEOSトークンで代替
+        4. フォールバック: Q-Formerのみ使用
+        """
+        print(f"\n🔤 方法4ハイブリッド特別トークン設定中...")
+        
+        self.seg_token = self.config.seg_token
+        self.seg_token_id = None
+        
+        try:
+            # Phase 1: 既存トークンチェック
+            print("  Phase 1: 既存トークンの確認...")
+            existing_tokens = ["[SEP]", "[CLS]", "<|end_of_text|>", "</s>"]
+            
+            for token in existing_tokens:
+                token_id = self.llama_processor.tokenizer.convert_tokens_to_ids(token)
+                if token_id is not None and token_id != self.llama_processor.tokenizer.unk_token_id:
+                    self.seg_token_id = token_id
+                    print(f"  ✅ 既存トークン'{token}'(ID:{token_id})をSEG用に再利用")
+                    return
+
+            # Phase 2: 量子化維持のまま新トークン追加を試行
+            print("  Phase 2: 新トークン追加を試行...")
+            if not hasattr(self.llama_model, 'quantization_method'):
+                # 非量子化モデルは通常追加
+                print("  - 非量子化モデル: 新トークン追加")
+                self.llama_processor.tokenizer.add_tokens([self.seg_token])
+                self.seg_token_id = self.llama_processor.tokenizer.convert_tokens_to_ids(self.seg_token)
+                self.llama_model.resize_token_embeddings(len(self.llama_processor.tokenizer))
+                print(f"  ✅ {self.seg_token}トークン追加成功 (ID: {self.seg_token_id})")
+                return
+            else:
+                # Phase 3: 量子化モデルは既存EOSで代替
+                print("  - 量子化モデル検出: EOSトークンで代替")
+                self.seg_token_id = self.llama_processor.tokenizer.eos_token_id
+                print(f"  ⚠️ 量子化モデルのため、EOSトークン(ID:{self.seg_token_id})で代替")
+                return
+                
+        except Exception as e:
+            print(f"  ⚠️ トークン設定エラー: {e}")
+            
+        # Phase 4: フォールバック - Q-Formerのみ使用
+        print("  Phase 4: フォールバック - Q-Formerのみでセグメンテーション")
+        self.seg_token_id = None
+        print("  ✅ SEGトークン無しモード: Q-Formerダイレクト抽出で動作")
+        
+        print(f"✅ 方法4ハイブリッド特別トークン設定完了")
+    
+    def forward(
+        self,
+        images: torch.Tensor,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        generate_mask: bool = True,
+        return_dict: bool = True
+    ) -> Dict[str, Any]:
+        """
+        統合モデルのフォワードパス
+        
+        Args:
+            images: (batch_size, 3, H, W) 入力画像
+            input_ids: (batch_size, seq_len) テキスト入力
+            attention_mask: (batch_size, seq_len) アテンションマスク
+            labels: (batch_size, seq_len) 学習用ラベル（オプション）
+            generate_mask: セグメンテーションマスクを生成するかどうか
+            return_dict: 辞書形式で結果を返すかどうか
+            
+        Returns:
+            Dict containing:
+                - text_loss: テキスト生成損失
+                - predicted_masks: 予測マスク (batch_size, num_queries, H, W)
+                - query_embeddings: Q-Formerクエリ埋め込み
+                - attention_maps: アテンション重み（デバッグ用）
+        """
+        
+        batch_size = images.size(0)
+        device = images.device
+        
+        # 1. Llama-4-Scout: マルチモーダル推論
+        print(f"🧠 Llama-4推論実行中...")
+        
+        # 画像とテキストの統合処理
+        llama_outputs = self.llama_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            images=images,  # Llama-4-Scoutはネイティブマルチモーダル
+            labels=labels,
+            output_hidden_states=True,
+            return_dict=True
+        )
+        
+        # テキスト損失
+        text_loss = llama_outputs.loss if labels is not None else None
+        
+        # 2. 方法4ハイブリッド: Q-Former + SEGトークン特徴抽出
+        print(f"🔍 方法4ハイブリッド特徴抽出実行中...")
+        
+        # Llama-4の最終隠れ状態を取得
+        encoder_hidden_states = llama_outputs.hidden_states[-1]  # (batch_size, seq_len, hidden_size)
+        
+        # メイン: Q-Formerで能動的に情報抽出（2025年公式API準拠）
+        qformer_outputs = self.qformer(
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=attention_mask,
+            output_attentions=False,  # 高速化のため無効
+            return_dict=True
+        )
+        
+        # Q-Formerからのリッチなプロンプト
+        query_embeddings = qformer_outputs['query_embeds']  # (batch_size, num_queries, hidden_size)
+        sam_prompts = qformer_outputs['sam_prompts']        # (batch_size, num_queries, sam_prompt_dim)
+        
+        # 補助: SEGトークンからの特徴（利用可能な場合）
+        seg_features = None
+        if self.seg_token_id is not None:
+            print(f"  + SEGトークン補助特徴抽出中...")
+            try:
+                # SEGトークンの位置を特定
+                seg_positions = (input_ids == self.seg_token_id).nonzero(as_tuple=True)
+                
+                if len(seg_positions[0]) > 0:
+                    # SEGトークンが存在する場合、その隠れ状態を抽出
+                    batch_indices, token_indices = seg_positions
+                    seg_hidden_states = encoder_hidden_states[batch_indices, token_indices]  # (num_seg_tokens, hidden_size)
+                    
+                    # SEG特徴をSAMプロンプト次元に射影
+                    if not hasattr(self, 'seg_projector'):
+                        self.seg_projector = torch.nn.Linear(
+                            encoder_hidden_states.size(-1), 
+                            sam_prompts.size(-1)
+                        ).to(device)
+                    
+                    seg_features = self.seg_projector(seg_hidden_states)  # (num_seg_tokens, sam_prompt_dim)
+                    print(f"  ✅ SEGトークン特徴: {seg_features.shape}")
+                    
+                    # Q-FormerプロンプトとSEG特徴を融合（weighted average）
+                    if seg_features.size(0) > 0:
+                        # 最初のSEG特徴を使用（複数ある場合）
+                        seg_feature = seg_features[0:1].unsqueeze(0)  # (1, 1, sam_prompt_dim)
+                        
+                        # Q-Formerプロンプトに追加（concatenation）
+                        sam_prompts = torch.cat([sam_prompts, seg_feature.expand(batch_size, -1, -1)], dim=1)
+                        print(f"  ✅ ハイブリッドプロンプト: {sam_prompts.shape}")
+                
+            except Exception as e:
+                print(f"  ⚠️ SEGトークン抽出エラー: {e}")
+                print(f"  - Q-Formerのみで続行")
+        else:
+            print(f"  - SEGトークン無効: Q-Formerのみでセグメンテーション")
+        
+        # 3. SAM2: 高精度セグメンテーション
+        predicted_masks = None
+        if generate_mask:
+            print(f"🎯 SAM2セグメンテーション実行中...")
+            
+            predicted_masks = []
+            for batch_idx in range(batch_size):
+                # 各画像に対してSAM2実行
+                image_np = images[batch_idx].permute(1, 2, 0).detach().cpu().numpy()  # (H, W, 3)
+                batch_prompts = sam_prompts[batch_idx]  # (num_queries, sam_prompt_dim)
+                
+                # SAM2に画像設定
+                self.sam2.set_image(image_np)
+                
+                # プロンプトベースセグメンテーション
+                sam_results = self.sam2.predict_with_prompts(
+                    prompt_embeddings=batch_prompts,
+                    multimask_output=False
+                )
+                
+                # マスクを追加
+                masks = sam_results['masks']  # (num_queries, H, W)
+                predicted_masks.append(masks)
+            
+            # バッチ次元でスタック
+            predicted_masks = torch.stack(predicted_masks, dim=0)  # (batch_size, num_queries, H, W)
+        
+        # 結果の構築
+        outputs = {
+            'text_loss': text_loss,
+            'predicted_masks': predicted_masks,
+            'query_embeddings': query_embeddings,
+            'sam_prompts': sam_prompts,
+            'llama_hidden_states': encoder_hidden_states,
+        }
+        
+        if return_dict:
+            return outputs
+        else:
+            return (text_loss, predicted_masks, query_embeddings)
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """統合モデル情報取得"""
+        llama_params = sum(p.numel() for p in self.llama_model.parameters())
+        qformer_params = sum(p.numel() for p in self.qformer.parameters())
+        sam2_info = self.sam2.get_model_info()
+        
+        return {
+            'model_type': 'LISA-Llama4-Scout + Q-Former + SAM2',
+            'llama4_params': llama_params,
+            'qformer_params': qformer_params,
+            'sam2_params': sam2_info['parameters'],
+            'total_params': llama_params + qformer_params + sam2_info['parameters'],
+            'llama4_model_id': self.config.llama_model_id,
+            'qformer_queries': self.config.qformer_config['num_queries'],
+            'sam2_type': sam2_info['model_type'],
+        }
+
 
 class QFormerSegmentationBridge(nn.Module):
     """

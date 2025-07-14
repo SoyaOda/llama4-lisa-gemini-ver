@@ -154,8 +154,8 @@ class OfficialQFormerModel(nn.Module):
             nn.Linear(self.config['hidden_size'] // 2, self.config['sam_prompt_dim']),
         )
         
-        # 2025年ベストプラクティス: テキスト処理パイプライン
-        self.text_processor = QFormerTextProcessor()
+        # 2025年公式API準拠: テキスト処理削除（query_embeds中心化）
+        # self.text_processor = QFormerTextProcessor()  # 廃止
         
         print(f"✅ 公式Q-Former初期化完了")
         print(f"  - パラメータ数: {sum(p.numel() for p in self.parameters()):,}")
@@ -163,28 +163,29 @@ class OfficialQFormerModel(nn.Module):
     
     def forward(
         self,
-        # BLIP-2公式API準拠パラメータ
+        # 🔄 2025年公式API準拠パラメータ (Web調査ベース)
         query_embeds: Optional[torch.Tensor] = None,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
-        # 2025年ベストプラクティス: 文字列入力対応
-        text_input: Optional[List[str]] = None,
+        # 📝 非公式パラメータ (フォールバック用)
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         # オプション
         output_attentions: bool = False,
         return_dict: bool = True
     ) -> Dict[str, torch.Tensor]:
         """
-        BLIP-2準拠Q-Formerフォワードパス (2025年完全版)
+        HuggingFace公式BLIP-2 Q-Formerフォワードパス (2025年Web調査版)
+        
+        🔄 Web調査結果: HuggingFace公式のBlip2QFormerModelは
+           text_inputパラメータを直接サポートしていません
         
         Args:
             query_embeds: (batch_size, num_queries, hidden_size) 学習可能クエリ
-            input_ids: (batch_size, seq_len) テキストトークンID
-            attention_mask: (batch_size, seq_len) テキストアテンションマスク
-            encoder_hidden_states: (batch_size, seq_len, hidden_size) 画像特徴
-            encoder_attention_mask: (batch_size, seq_len) 画像アテンションマスク
-            text_input: List[str] テキスト文字列入力 (新規)
+            encoder_hidden_states: (batch_size, seq_len, hidden_size) VLM特徴
+            encoder_attention_mask: (batch_size, seq_len) VLMアテンションマスク
+            input_ids: 非推奨パラメータ (フォールバック用)
+            attention_mask: 非推奨パラメータ (フォールバック用)
             output_attentions: アテンション重みを返すかどうか
             return_dict: 辞書形式で結果を返すかどうか
             
@@ -195,78 +196,63 @@ class OfficialQFormerModel(nn.Module):
                 - attentions: アテンション重み（オプション）
         """
         
-        # 入力検証とデバイス取得
+        # 📋 Web調査結果ベース入力検証 (2025年公式API準拠)
         if encoder_hidden_states is None:
-            raise ValueError("encoder_hidden_states is required")
+            raise ValueError("encoder_hidden_states is required for Q-Former cross-attention")
             
         batch_size, seq_len, hidden_size = encoder_hidden_states.shape
         device = encoder_hidden_states.device
         
-        # text_input処理: 文字列入力からトークン化
-        if text_input is not None and (input_ids is None or attention_mask is None):
-            print(f"  🔄 text_input処理: {len(text_input)}件のテキスト")
+        # 🔄 query_embeds準備: 公式BLIP-2学習可能クエリアクセス (Web調査準拠)
+        if query_embeds is None:
+            print(f"  🔄 学習可能クエリアクセス: {self.config['num_queries']}個")
             try:
-                text_tokens = self.text_processor.process_text(
-                    text_input=text_input, 
-                    device=device, 
-                    dtype=encoder_hidden_states.dtype
-                )
-                input_ids = text_tokens['input_ids']
-                attention_mask = text_tokens['attention_mask']
-                print(f"  ✅ テキストトークン化完了: {input_ids.shape}")
+                # Web調査結果: 公式BLIP-2はself.qformer.query_tokensを持つ
+                if hasattr(self.qformer, 'query_tokens'):
+                    query_embeds = self.qformer.query_tokens.expand(batch_size, -1, -1)
+                    print(f"    ✅ 公式query_tokens使用: {query_embeds.shape}")
+                else:
+                    # フォールバック: ゼロ初期化クエリ
+                    device = encoder_hidden_states.device
+                    dtype = encoder_hidden_states.dtype
+                    query_embeds = torch.zeros(
+                        batch_size, self.config['num_queries'], self.config['hidden_size'],
+                        device=device, dtype=dtype
+                    )
+                    print(f"    ⚠️ フォールバック: ゼロクエリ使用: {query_embeds.shape}")
             except Exception as e:
-                print(f"  ⚠️ テキスト処理エラー: {e}")
-                # フォールバック: ダミートークン
-                input_ids = torch.zeros((batch_size, 10), dtype=torch.long, device=device)
-                attention_mask = torch.ones((batch_size, 10), dtype=torch.long, device=device)
+                print(f"    ❌ クエリアクセスエラー: {e}")
+                # 最終フォールバック
+                device = encoder_hidden_states.device
+                dtype = encoder_hidden_states.dtype
+                query_embeds = torch.zeros(
+                    batch_size, self.config['num_queries'], self.config['hidden_size'],
+                    device=device, dtype=dtype
+                )
+        
+        print(f"  📊 Q-Former入力統計:")
+        print(f"    - query_embeds: {query_embeds.shape}")
+        print(f"    - encoder_hidden_states: {encoder_hidden_states.shape}")
+        print(f"    - device: {device}")
         
         # encoder_attention_maskの処理
         if encoder_attention_mask is None:
             encoder_attention_mask = torch.ones(batch_size, seq_len, device=device)
         
-        # 🔄 BLIP-2公式Q-Former実行
+        # 🔄 2025年公式BLIP-2 Q-Former実行 (Web調査ベース簡潔版)
         try:
-            result = self._execute_official_qformer(
+            print(f"  🔄 公式Q-Former実行中...")
+            result = self._execute_official_qformer_2025(
                 query_embeds=query_embeds,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
                 output_attentions=output_attentions
             )
+            print(f"  ✅ 公式Q-Former実行成功")
             
-        except TypeError as e:
-            if "unexpected keyword argument" in str(e):
-                print(f"⚠️ API互換性エラー: {e}")
-                result = self._handle_api_compatibility_error(
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    output_attentions=output_attentions
-                )
-            else:
-                print(f"⚠️ 型エラー: {e}")
-                result = self._fallback_forward(
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    output_attentions=output_attentions
-                )
-        except RuntimeError as e:
-            if "layer_norm" in str(e) and "NoneType" in str(e):
-                print(f"⚠️ NoneTypeエラー: {e}")
-                result = self._handle_nonetype_error(
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    output_attentions=output_attentions
-                )
-            else:
-                print(f"⚠️ ランタイムエラー: {e}")
-                result = self._fallback_forward(
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    output_attentions=output_attentions
-                )
         except Exception as e:
-            print(f"⚠️ 未知エラー: {e}")
+            print(f"  ⚠️ 公式APIエラー: {e}")
+            print(f"  🔄 フォールバック実行中...")
             result = self._fallback_forward(
                 encoder_hidden_states=encoder_hidden_states,
                 encoder_attention_mask=encoder_attention_mask,
@@ -282,23 +268,25 @@ class OfficialQFormerModel(nn.Module):
         else:
             return (result['query_embeds'], sam_prompts)
     
-    def _execute_official_qformer(
+    def _execute_official_qformer_2025(
         self,
-        query_embeds: Optional[torch.Tensor],
-        input_ids: Optional[torch.Tensor],
-        attention_mask: Optional[torch.Tensor],
+        query_embeds: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
         output_attentions: bool
     ) -> Dict[str, torch.Tensor]:
         """
-        公式BLIP-2 Q-Formerの実行
+        2025年公式BLIP-2 Q-Formerの実行 (Web調査準拠)
+        
+        📋 公式APIパラメータ:
+        - query_embeds: 必須
+        - encoder_hidden_states: クロスアテンション用
+        - encoder_attention_mask: アテンションマスク
+        - text_inputやinput_idsは非対応 (Web調査結果)
         """
-        # BLIP-2公式APIコール
+        # 🔄 HuggingFace公式BLIP-2 Q-Formerコール
         qformer_outputs = self.qformer(
-            query_embeds=query_embeds,  # None = 学習可能クエリを使用
-            input_ids=input_ids,
-            attention_mask=attention_mask,
+            query_embeds=query_embeds,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             output_attentions=output_attentions,
@@ -306,11 +294,11 @@ class OfficialQFormerModel(nn.Module):
         )
         
         # クエリ埋め込みを取得
-        query_embeds = qformer_outputs.last_hidden_state
+        query_embeds_output = qformer_outputs.last_hidden_state
         
         result = {
-            'query_embeds': query_embeds,
-            'last_hidden_state': query_embeds,  # HuggingFace互換性
+            'query_embeds': query_embeds_output,
+            'last_hidden_state': query_embeds_output,  # HuggingFace互換性
         }
         
         if output_attentions and hasattr(qformer_outputs, 'attentions'):
@@ -343,73 +331,9 @@ class OfficialQFormerModel(nn.Module):
             'last_hidden_state': query_embeds,
         }
     
-    def _handle_api_compatibility_error(
-        self,
-        encoder_hidden_states: torch.Tensor,
-        encoder_attention_mask: torch.Tensor,
-        output_attentions: bool
-    ) -> Dict[str, torch.Tensor]:
-        """
-        API互換性エラーの特別処理
-        """
-        print(f"  🔄 API互換性エラー対応: シンプルアーキテクチャへフォールバック")
-        
-        try:
-            # 最小限のパラメータで試行
-            qformer_outputs = self.qformer(
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                return_dict=True
-            )
-            
-            query_embeds = qformer_outputs.last_hidden_state
-            print(f"  ✅ 最小限APIで成功")
-            
-            return {
-                'query_embeds': query_embeds,
-                'last_hidden_state': query_embeds,
-            }
-            
-        except Exception as e:
-            print(f"  ⚠️ 最小限APIでも失敗: {e}")
-            return self._fallback_forward(
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                output_attentions=output_attentions
-            )
+    # API互換性エラー処理削除 (2025年公式API準拠で不要)
     
-    def _handle_nonetype_error(
-        self,
-        encoder_hidden_states: torch.Tensor,
-        encoder_attention_mask: torch.Tensor,
-        output_attentions: bool
-    ) -> Dict[str, torch.Tensor]:
-        """
-        NoneTypeエラーの特別処理
-        """
-        print(f"  🔄 NoneTypeエラー対応: データ検証強化")
-        
-        batch_size, seq_len, hidden_size = encoder_hidden_states.shape
-        device = encoder_hidden_states.device
-        
-        # データ検証と正規化
-        if torch.isnan(encoder_hidden_states).any():
-            print(f"  ⚠️ NaN検出: ゼロで置換")
-            encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0)
-        
-        if torch.isinf(encoder_hidden_states).any():
-            print(f"  ⚠️ Inf検出: クリップ")
-            encoder_hidden_states = torch.clamp(encoder_hidden_states, -10.0, 10.0)
-        
-        # Layer Normalizationで正規化
-        norm_layer = nn.LayerNorm(hidden_size, device=device, dtype=encoder_hidden_states.dtype)
-        encoder_hidden_states = norm_layer(encoder_hidden_states)
-        
-        return self._fallback_forward(
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            output_attentions=output_attentions
-        )
+    # NoneTypeエラー処理削除 (2025年公式API準拠で不要)
 
 
 class MultiHeadAttention(nn.Module):

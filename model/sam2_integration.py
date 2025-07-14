@@ -78,7 +78,8 @@ class SAM2Wrapper(nn.Module):
         self, 
         model_id: str = "facebook/sam2-hiera-large",
         device: str = "cuda",
-        target_dtype: torch.dtype = torch.bfloat16
+        target_dtype: torch.dtype = torch.bfloat16,
+        debug_mode: bool = True
     ):
         super().__init__()
         
@@ -89,12 +90,18 @@ class SAM2Wrapper(nn.Module):
                 "また、huggingface_hubも必要: pip install huggingface_hub"
             )
         
-        # GPU専用環境設定 + BFloat16統一
+        # 🔄 2025年ベストプラクティス: 即座データ型統一設定
         self.device = "cuda"
         self.model_id = model_id
+        self.debug_mode = debug_mode
         # GPU専用デバイス・データ型管理
         self._target_device = self.device
         self._target_dtype = target_dtype
+        
+        if debug_mode:
+            print(f"  🔧 SAM2Wrapper設定:")
+            print(f"    - target_dtype: {target_dtype}")
+            print(f"    - debug_mode: {debug_mode}")
         
         print(f"🔄 Meta公式SAM2初期化中...")
         print(f"  - モデルID: {model_id}")
@@ -228,16 +235,16 @@ class SAM2Wrapper(nn.Module):
         device = getattr(self, '_target_device', 'cuda')
         target_dtype = getattr(self, '_target_dtype', torch.bfloat16)
         
-        # Web調査結果: SAM2はFloat32出力のため、必要に応じてBFloat16に変換
-        masks = torch.from_numpy(masks).to(device=device)
-        iou_predictions = torch.from_numpy(iou_predictions).to(device=device) 
-        low_res_logits = torch.from_numpy(low_res_logits).to(device=device)
+        # 🔄 2025年ベストプラクティス: 即座データ型統一（Float32混入防止）
+        masks = torch.from_numpy(masks).to(device=device, dtype=target_dtype)
+        iou_predictions = torch.from_numpy(iou_predictions).to(device=device, dtype=target_dtype) 
+        low_res_logits = torch.from_numpy(low_res_logits).to(device=device, dtype=target_dtype)
         
-        # ターゲットデータ型がBFloat16の場合のみ変換（互換性保持）
-        if target_dtype == torch.bfloat16:
-            masks = masks.to(dtype=target_dtype)
-            iou_predictions = iou_predictions.to(dtype=target_dtype)
-            low_res_logits = low_res_logits.to(dtype=target_dtype)
+        # デバッグ情報
+        print(f"  📊 SAM2出力統計:")
+        print(f"    - masks: {masks.shape}, {masks.dtype}, device: {masks.device}")
+        print(f"    - iou_predictions: {iou_predictions.shape}, {iou_predictions.dtype}")
+        print(f"    - 平均IoU: {iou_predictions.mean().item():.3f}")
         
         return {
             'masks': masks,
@@ -284,6 +291,7 @@ class SAM2Wrapper(nn.Module):
 def get_sam2_wrapper(
     model_id: str = "facebook/sam2-hiera-large", 
     target_dtype: torch.dtype = torch.bfloat16,
+    debug_mode: bool = True,
     **kwargs
 ) -> SAM2Wrapper:
     """
@@ -315,7 +323,8 @@ def get_sam2_wrapper(
     
     print(f"🔄 Meta公式SAM2を使用: {model_id}")
     print(f"  - データ型統一: {target_dtype}")
-    return SAM2Wrapper(model_id=model_id, target_dtype=target_dtype, **kwargs)
+    print(f"  - デバッグモード: {debug_mode}")
+    return SAM2Wrapper(model_id=model_id, target_dtype=target_dtype, debug_mode=debug_mode, **kwargs)
 
 
 def test_sam2_integration():

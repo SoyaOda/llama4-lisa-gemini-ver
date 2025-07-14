@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # Lambda Cloud修正デプロイスクリプト
-echo "🚀 Phase 1修正をLambda Cloudにデプロイ中..."
+echo "🚀 Phase 2修正（2025年公式API準拠）をLambda Cloudにデプロイ中..."
 
 # 修正されたファイルをLambda Cloudに転送
-echo "📁 修正ファイル転送中..."
+echo "📁 Phase 2修正ファイル転送中..."
 rsync -avz --progress -e "ssh -i ~/.ssh/lambda_cloud_key" \
     model/losses_qformer_sam2.py \
     model/qformer.py \
     model/llama4_qformer_sam2.py \
+    model/sam2_integration.py \
     ubuntu@192.222.55.105:/lambda/nfs/llama4-lisa-project-fs-central-texas/code/LISA-Gemma-Linux/model/
 
 echo "✅ デプロイ完了"
