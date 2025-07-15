@@ -86,11 +86,10 @@ LORA_TARGET_MODULES = [
     "gate_proj", "up_proj", "down_proj"      # FFN層（必須）
 ]
 
-# 🔄 SAM2+MLE論文準拠: モーダル特化target_modules
+# 🔄 SAM2+MLE論文準拠: モーダル特化target_modules（Web調査ベース修正）
 SAM2_TARGET_MODULES = [
-    "image_encoder.blocks.*.attn.qkv",       # Hiera ViT attention (論文準拠)
-    "image_encoder.blocks.*.mlp.fc1",        # MLP layer 1 (論文準拠)
-    "image_encoder.blocks.*.mlp.fc2"         # MLP layer 2 (論文準拠)
+    "qkv",                                   # SAM2 combined QKV projection（Web調査結果）
+    "proj"                                   # SAM2 output projection（Web調査結果）
 ]
 
 QFORMER_TARGET_MODULES = [

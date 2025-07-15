@@ -90,27 +90,33 @@ class LlamaQFormerSAM2Config:
 
 class QFormerSegmentationBridge(nn.Module):
     """
-    方法3: Q-Former統合（本命・高性能）
+    方法3: Q-Former統合（本命・高性能）+ 重複ロード回避
     
     SEGトークン不要、クエリベースで情報抽出:
     - 32個のクエリで能動的に情報取得
     - 複数オブジェクトも処理可能
     - 情報ボトルネック解消、SOTA性能
+    - Option 1: 外部共有Llama-4インスタンス使用（重複ロード回避）
     """
     
-    def __init__(self, config: Optional[LlamaQFormerSAM2Config] = None, training_stage: int = 1, enable_moe: bool = True):
+    def __init__(self, 
+                 config: Optional[LlamaQFormerSAM2Config] = None, 
+                 shared_llama_model: Optional[Any] = None,
+                 shared_llama_processor: Optional[Any] = None,
+                 training_stage: int = 1, 
+                 enable_moe: bool = True):
         super().__init__()
         
         self.config = config or LlamaQFormerSAM2Config()
         self.training_stage = training_stage
         self.enable_moe = enable_moe
         
-        print("=== 方法3: Q-Former純粋セグメンテーションブリッジ初期化 ===")
+        print("=== 方法3: Q-Former純粋セグメンテーションブリッジ初期化（重複回避版） ===")
         if enable_moe:
             print("🔄 Phase 3A: MoE最適化モード有効")
         
-        # 1. Llama-4-Scout VLM初期化
-        self._init_llama4_model()
+        # 1. Llama-4-Scout VLM設定（Option 1: 共有インスタンス使用）
+        self._setup_shared_llama4(shared_llama_model, shared_llama_processor)
         
         # 2. Q-Former初期化（メイン処理）
         self._init_qformer()
@@ -130,7 +136,8 @@ class QFormerSegmentationBridge(nn.Module):
         # 6. 最終デバイス配置確認・統一
         self._ensure_device_consistency()
         
-        print("✅ 方法3 Q-Formerブリッジ初期化完了")
+        print("✅ 方法3 Q-Formerブリッジ初期化完了（重複回避版）")
+        print("  - Llama-4: 外部共有インスタンス使用")
         print("  - SEGトークン: 不使用")
         print("  - 特徴抽出: Q-Formerのみ")
         print("  - 情報ボトルネック: 解消済み")
@@ -138,12 +145,34 @@ class QFormerSegmentationBridge(nn.Module):
         if enable_moe:
             print(f"  - MoE最適化: 有効 ({self.config.moe_config['num_experts']} experts)")
         
-    def _init_llama4_model(self):
-        """Llama-4-Scout VLM初期化（方法3専用設定）"""
-        print(f"\n🧠 方法3: Llama-4-Scout初期化...")
+    def _setup_shared_llama4(self, shared_llama_model: Optional[Any], shared_llama_processor: Optional[Any]):
+        """Option 1: 共有Llama-4インスタンス設定（重複ロード回避）"""
+        print(f"\n🧠 Option 1: 共有Llama-4インスタンス設定...")
         
-        if not LLAMA4_AVAILABLE:
-            raise ImportError("Llama-4-Scoutが利用できません")
+        if shared_llama_model is not None and shared_llama_processor is not None:
+            # 共有インスタンス使用（推奨）
+            self.llama_model = shared_llama_model
+            self.llama_processor = shared_llama_processor
+            print(f"✅ 外部共有Llama-4インスタンス使用")
+            print(f"  - メモリ効率: 重複ロード回避")
+            print(f"  - パラメータ: 109B（共有）")
+            
+            # デバイス情報確認
+            if hasattr(self.llama_model, 'hf_device_map'):
+                device_map = self.llama_model.hf_device_map
+                print(f"  - デバイス分散: {len(device_map) if device_map else 0} デバイス")
+            
+        else:
+            # フォールバック: 独自初期化（非推奨、メモリ使用量増加）
+            print(f"⚠️ 共有インスタンス未提供、独自初期化実行...")
+            if not LLAMA4_AVAILABLE:
+                raise ImportError("Llama-4-Scoutが利用できません")
+            
+            self._fallback_init_llama4()
+    
+    def _fallback_init_llama4(self):
+        """フォールバック: 独自Llama-4初期化（非推奨）"""
+        print(f"🔄 フォールバック: 独自Llama-4初期化（メモリ効率低下）...")
         
         try:
             # 🔄 2025年ベストプラクティス: Llama-4 Early Fusion最適化
@@ -185,13 +214,14 @@ class QFormerSegmentationBridge(nn.Module):
             print(f"  - 10M context: 対応済み")
             
             # 🔄 Llama-4-Scout Early Fusion初期化
+            # Option F: 初期化時にすべてBFloat16で統一
             self.llama_model = Llama4ForConditionalGeneration.from_pretrained(
                 self.config.llama_model_id,
                 quantization_config=quantization_config,
                 device_map=device_map,
                 max_memory=max_memory,
-                torch_dtype=torch.bfloat16,
-                attn_implementation=self.config.attn_implementation,
+                torch_dtype=torch.bfloat16,  # 🔥 完全型統一
+                attn_implementation="sdpa",  # 型一貫性確保
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,              # 🔄 メモリ効率化
                 use_safetensors=True,                # 🔄 安全な重み読み込み
@@ -202,10 +232,10 @@ class QFormerSegmentationBridge(nn.Module):
                 trust_remote_code=True
             )
             
-            print(f"✅ 2025年Llama-4-Scout Early Fusion初期化成功")
+            print(f"⚠️ フォールバック初期化成功（メモリ使用量増加）")
             
         except Exception as e:
-            print(f"❌ 方法3 Llama-4-Scout初期化失敗: {e}")
+            print(f"❌ フォールバック初期化失敗: {e}")
             raise
     
     def _init_qformer(self):
@@ -362,14 +392,12 @@ class QFormerSegmentationBridge(nn.Module):
                 base_models['llama'] = self.llama_model
                 print(f"  ✅ Llama-4-Scout: 言語理解・推論エキスパート")
             
-            # SAM2追加
+            # SAM2除外（Web調査結果: LoRA効果限定的 + Identity()エラー回避）
             if hasattr(self, 'sam2') and self.sam2 is not None:
-                # SAM2Wrapperからactualモデルにアクセス
-                if hasattr(self.sam2, 'predictor') and hasattr(self.sam2.predictor, 'model'):
-                    base_models['sam2'] = self.sam2.predictor.model
-                    print(f"  ✅ SAM2: 視覚セグメンテーションエキスパート")
-                else:
-                    print(f"  ⚠️ SAM2モデルアクセス不可: MoEから除外")
+                print(f"  🔄 SAM2: MoE除外（Web調査準拠）")
+                print(f"    - 理由1: SAM2 LoRA効果が限定的（Web調査結果）")
+                print(f"    - 理由2: Identity()モジュールエラー回避")
+                print(f"    - 代替: 軽量SegmentationHead活用")
             
             # Q-Former追加
             if hasattr(self, 'qformer_model') and self.qformer_model is not None:

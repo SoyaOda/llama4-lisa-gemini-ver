@@ -205,7 +205,12 @@ class LoRAExpert(nn.Module):
         )
         
         # PEFT適用
-        self.peft_model = get_peft_model(base_model, lora_config)
+        # Option E: PEFT dtype自動変換無効化
+        self.peft_model = get_peft_model(
+            base_model, 
+            lora_config, 
+            autocast_adapter_dtype=False  # 🔥 dtype自動変換無効化
+        )
         
         # モーダル特化レイヤー
         hidden_size = getattr(base_model.config, 'hidden_size', 5120)
@@ -423,7 +428,12 @@ class HeterogeneousMoEAdapter(nn.Module):
         for name, expert in self.experts.items():
             expert_info = expert.get_expert_info()
             stats["expert_info"][name] = expert_info
-            stats["total_trainable_params"] += expert_info["trainable_params"]
+            # tupleの場合は最初の要素を使用
+            trainable_params = expert_info["trainable_params"]
+            if isinstance(trainable_params, tuple):
+                stats["total_trainable_params"] += trainable_params[0]
+            else:
+                stats["total_trainable_params"] += trainable_params
             stats["expert_weights"][name] = self.expert_weight_params.get(name, torch.tensor(0.0)).item()
         
         return stats
