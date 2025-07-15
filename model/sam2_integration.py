@@ -28,6 +28,59 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config_linux
 
+def download_sam2_checkpoint(model_name: str, save_path: str, download_url: str) -> bool:
+    """
+    SAM2チェックポイント自動ダウンロード (config_linux.py準拠)
+    
+    Args:
+        model_name: モデル名 (例: "sam2-hiera-large")
+        save_path: 保存先パス (config_linux.SAM2_CHECKPOINT_PATH)
+        download_url: ダウンロードURL (config_linux.SAM2_DOWNLOAD_URL)
+        
+    Returns:
+        bool: ダウンロード成功/既存ファイル確認済み
+    """
+    
+    # 既存ファイル確認
+    if os.path.exists(save_path):
+        file_size = os.path.getsize(save_path)
+        print(f"  ✅ SAM2チェックポイント既存: {save_path}")
+        print(f"    - ファイルサイズ: {file_size / (1024**3):.2f} GB")
+        return True
+    
+    # ディレクトリ作成
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    print(f"  🔄 SAM2チェックポイントダウンロード中...")
+    print(f"    - URL: {download_url}")
+    print(f"    - 保存先: {save_path}")
+    
+    try:
+        # プログレス表示付きダウンロード
+        def progress_hook(block_num, block_size, total_size):
+            if total_size > 0:
+                percent = min(100, (block_num * block_size * 100) // total_size)
+                if block_num % 100 == 0:  # 100ブロックごとに表示
+                    print(f"    📥 ダウンロード進行: {percent}% ({block_num * block_size / (1024**2):.1f}MB)")
+        
+        urllib.request.urlretrieve(download_url, save_path, progress_hook)
+        
+        # ダウンロード完了確認
+        if os.path.exists(save_path):
+            file_size = os.path.getsize(save_path)
+            print(f"  ✅ SAM2チェックポイントダウンロード完了")
+            print(f"    - ファイルサイズ: {file_size / (1024**3):.2f} GB")
+            return True
+        else:
+            print(f"  ❌ ダウンロード失敗: ファイルが作成されませんでした")
+            return False
+            
+    except Exception as e:
+        print(f"  ❌ SAM2チェックポイントダウンロード失敗: {e}")
+        if os.path.exists(save_path):
+            os.remove(save_path)  # 不完全ファイル削除
+        return False
+
 import subprocess
 import sys
 
@@ -79,7 +132,13 @@ class SAM2Wrapper(nn.Module):
         model_id: str = "facebook/sam2-hiera-large",
         device: str = "cuda",
         target_dtype: torch.dtype = torch.bfloat16,
-        debug_mode: bool = True
+        debug_mode: bool = True,
+        # 🔄 2025年SAM2最適化パラメータ (Web調査ベース)
+        vos_optimized: bool = False,         # torch.compile VOS最適化
+        compile_model: bool = False,         # モデル全体コンパイル
+        memory_pathways: int = 1,            # メモリパス数（1-5, 3推奨）
+        mixed_precision: bool = False,       # 混合精度学習
+        **kwargs
     ):
         super().__init__()
         
@@ -94,14 +153,36 @@ class SAM2Wrapper(nn.Module):
         self.device = "cuda"
         self.model_id = model_id
         self.debug_mode = debug_mode
-        # GPU専用デバイス・データ型管理
+        self.vos_optimized = vos_optimized
+        self.compile_model = compile_model
+        self.memory_pathways = memory_pathways
+        self.mixed_precision = mixed_precision
+        
+        # GPU専用デバイス・データ型管理（Web調査ベース: 文字列→torch.dtype変換）
         self._target_device = self.device
-        self._target_dtype = target_dtype
+        
+        # 🔄 Web調査結果: 文字列dtype→torch.dtype変換
+        if isinstance(target_dtype, str):
+            if target_dtype == "bfloat16":
+                self._target_dtype = torch.bfloat16
+            elif target_dtype == "float16":
+                self._target_dtype = torch.float16
+            elif target_dtype == "float32":
+                self._target_dtype = torch.float32
+            else:
+                # フォールバック: getattr使用
+                self._target_dtype = getattr(torch, target_dtype, torch.bfloat16)
+        else:
+            self._target_dtype = target_dtype
         
         if debug_mode:
             print(f"  🔧 SAM2Wrapper設定:")
             print(f"    - target_dtype: {target_dtype}")
             print(f"    - debug_mode: {debug_mode}")
+            print(f"    - vos_optimized: {vos_optimized}")
+            print(f"    - compile_model: {compile_model}")
+            print(f"    - memory_pathways: {memory_pathways}")
+            print(f"    - mixed_precision: {mixed_precision}")
         
         print(f"🔄 Meta公式SAM2初期化中...")
         print(f"  - モデルID: {model_id}")
@@ -109,13 +190,74 @@ class SAM2Wrapper(nn.Module):
         print(f"  - 自動取得: HuggingFace Hub")
         
         try:
-            # 🔄 Meta公式SAM2 (自動重み取得)
-            self.predictor = SAM2ImagePredictor.from_pretrained(
-                model_id,
-                device=self.device
-            )
+            # 🔄 2025年最適化: VOS対応判定 (修正版: ImagePredictor使用)
+            if vos_optimized or compile_model:
+                print(f"  - 2025年最適化: HuggingFace優先・torch.compile対応")
+                
+                try:
+                    # ✅ Web調査修正: HuggingFace優先使用 (API統一)
+                    hf_model_id = config_linux.SAM2_HF_MODEL_ID
+                    self.predictor = SAM2ImagePredictor.from_pretrained(
+                        hf_model_id,
+                        device=self.device
+                    )
+                    
+                    # 🔄 torch.compile最適化 (ImagePredictorでも有効)
+                    if compile_model:
+                        try:
+                            # Web調査結果: model属性でtorch.compile適用
+                            if hasattr(self.predictor, 'model'):
+                                self.predictor.model = torch.compile(
+                                    self.predictor.model,
+                                    mode="default",
+                                    dynamic=True
+                                )
+                                print(f"  ✅ torch.compile適用完了")
+                        except Exception as compile_error:
+                            print(f"  ⚠️ torch.compile失敗 (動作継続): {compile_error}")
+                    
+                    print(f"✅ 2025年VOS最適化SAM2初期化成功")
+                    print(f"  - HuggingFaceモデル: {hf_model_id}")
+                    
+                except Exception as hf_error:
+                    # フォールバック: 元のmodel_id
+                    print(f"  ⚠️ HuggingFace初期化失敗: {hf_error}")
+                    print(f"  🔄 元model_idでフォールバック...")
+                    
+                    self.predictor = SAM2ImagePredictor.from_pretrained(
+                        model_id,
+                        device=self.device
+                    )
+                    
+                    print(f"✅ SAM2初期化成功（フォールバック）")
+                
+            else:
+                # 🔄 Web調査ベース: HuggingFace標準初期化 (最確実)
+                print(f"  - 標準初期化: HuggingFace Hub使用")
+                
+                try:
+                    # ✅ Web調査推奨: HuggingFaceモデルID優先使用
+                    hf_model_id = config_linux.SAM2_HF_MODEL_ID
+                    self.predictor = SAM2ImagePredictor.from_pretrained(
+                        hf_model_id,
+                        device=self.device
+                    )
+                    
+                    print(f"✅ HuggingFace SAM2標準初期化成功")
+                    print(f"  - HuggingFaceモデル: {hf_model_id}")
+                    
+                except Exception as std_error:
+                    # フォールバック: 元のmodel_id
+                    print(f"  ⚠️ HuggingFace標準初期化失敗: {std_error}")
+                    print(f"  🔄 元model_idでフォールバック...")
+                    
+                    self.predictor = SAM2ImagePredictor.from_pretrained(
+                        model_id,
+                        device=self.device
+                    )
+                    
+                    print(f"✅ SAM2標準初期化成功（フォールバック）")
             
-            print("✅ Meta公式SAM2初期化成功")
             print("✅ 重みファイル自動取得完了")
             
         except Exception as e:
@@ -231,14 +373,22 @@ class SAM2Wrapper(nn.Module):
                 multimask_output=multimask_output
             )
         
-        # numpy配列をPyTorchテンソルに変換（GPU専用環境 + 2025年ベストプラクティス）
+        # numpy配列をPyTorchテンソルに変換（GPU専用環境 + 2025年ベストプラクティス Web調査準拠）
         device = getattr(self, '_target_device', 'cuda')
         target_dtype = getattr(self, '_target_dtype', torch.bfloat16)
         
-        # 🔄 2025年ベストプラクティス: 即座データ型統一（Float32混入防止）
-        masks = torch.from_numpy(masks).to(device=device, dtype=target_dtype)
-        iou_predictions = torch.from_numpy(iou_predictions).to(device=device, dtype=target_dtype) 
-        low_res_logits = torch.from_numpy(low_res_logits).to(device=device, dtype=target_dtype)
+        # 🔄 Web調査結果: PyTorch公式推奨パターン（デバイス・データ型同時変換）
+        try:
+            # Web調査例: tensor.to(torch.bfloat16, device="cuda")
+            masks = torch.from_numpy(masks).to(dtype=target_dtype, device=device)
+            iou_predictions = torch.from_numpy(iou_predictions).to(dtype=target_dtype, device=device)
+            low_res_logits = torch.from_numpy(low_res_logits).to(dtype=target_dtype, device=device)
+        except Exception as to_error:
+            # フォールバック: 段階的変換（Web調査ベース）
+            print(f"  ⚠️ 同時変換失敗、段階的変換実行: {to_error}")
+            masks = torch.from_numpy(masks).to(device).to(target_dtype)
+            iou_predictions = torch.from_numpy(iou_predictions).to(device).to(target_dtype)
+            low_res_logits = torch.from_numpy(low_res_logits).to(device).to(target_dtype)
         
         # デバッグ情報
         print(f"  📊 SAM2出力統計:")

@@ -16,6 +16,7 @@ LISA-Llama4統合モデル統一設定ファイル
 import os
 from pathlib import Path
 from typing import Dict, Any
+import torch  # Web調査修正: torch.bfloat16使用のため
 
 # ==============================================================================
 # 1. 基本パス設定 (Lambda Cloud環境)
@@ -27,6 +28,12 @@ DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", "/lambda/nfs/lisa-gem
 
 # SAMチェックポイントパス（ViT-H）
 SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", "/lambda/nfs/lisa-gemma-project-fs/data/weights/sam_vit_h_4b8939.pth")
+
+# SAM2 Checkpoints (2025年ベストプラクティス - Web調査修正版)
+SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-central-texas/data/weights/sam2_hiera_large.pt")
+SAM2_CONFIG_NAME = "sam2_hiera_l.yaml"  # Web調査ベース正式名
+SAM2_DOWNLOAD_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"  # ✅ 修正: 正しいファイル名
+SAM2_HF_MODEL_ID = "facebook/sam2-hiera-large"  # ✅ HuggingFaceフォールバック用
 
 # Hugging Faceキャッシュディレクトリ
 HF_CACHE_DIR = os.environ.get('HF_HOME', None)
@@ -50,7 +57,7 @@ LOW_CPU_MEM_USAGE = True  # CPU→GPU転送を最適化（メモリ使用量削�
 ATTN_IMPLEMENTATION = "sdpa"  # 最も安定（flex_attentionバグ回避、Issue #37352）
 # 注: flex_attentionは推奨だがTypeErrorバグあり、eagerもcausal maskバグあり（Issue #37322）
 DEVICE_MAP = "auto"                     # GPU自動分散（実使用値）
-TORCH_DTYPE = "bfloat16"               # 推奨精度（実使用値）
+TORCH_DTYPE = torch.bfloat16            # 推奨精度（実使用値・Web調査修正）
 
 # モデル構造パラメータ
 LLAMA_HIDDEN_SIZE = 5120               # Llama4-Scout隠れ層サイズ
