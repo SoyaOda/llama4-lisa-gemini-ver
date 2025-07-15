@@ -34,6 +34,7 @@ import config_linux
 from model.qformer import get_qformer_model  # 🔄 公式/カスタム自動選択
 from model.sam2_integration import get_sam2_wrapper
 from model.losses_qformer_sam2 import get_composite_loss_qformer_sam2
+from model.moe_adapters import create_heterogeneous_moe_adapter, HeterogeneousMoEAdapter  # 🆕 Phase 3A: MoE統合
 
 try:
     from transformers import Llama4ForConditionalGeneration, AutoProcessor
@@ -72,6 +73,18 @@ class LlamaQFormerSAM2Config:
         
         # セグメンテーション特別トークン
         self.seg_token = config_linux.SEG_TOKEN  # "[SEG]"
+        
+        # 🆕 Phase 3A: MoE最適化設定 (SAM2+MLE論文準拠)
+        mle_base_config = config_linux.get_mle_config()
+        self.moe_config = {
+            'enable_moe': True,                                          # MoE機能有効化
+            'num_experts': mle_base_config['num_experts'],               # 3 (論文準拠)
+            'active_experts': mle_base_config['moe_top_k'],              # 2 (Top-k論文準拠)
+            'expert_capacity_factor': mle_base_config['expert_capacity_factor'], # 1.25
+            'lora_rank': mle_base_config['lora_rank'],                   # 16 (論文準拠)
+            'lora_alpha': mle_base_config['lora_alpha'],                 # 32 (論文準拠)
+            'expert_weights': mle_base_config['expert_weights']          # 論文準拠重み配分
+        }
 
 
 
@@ -85,13 +98,16 @@ class QFormerSegmentationBridge(nn.Module):
     - 情報ボトルネック解消、SOTA性能
     """
     
-    def __init__(self, config: Optional[LlamaQFormerSAM2Config] = None, training_stage: int = 1):
+    def __init__(self, config: Optional[LlamaQFormerSAM2Config] = None, training_stage: int = 1, enable_moe: bool = True):
         super().__init__()
         
         self.config = config or LlamaQFormerSAM2Config()
         self.training_stage = training_stage
+        self.enable_moe = enable_moe
         
         print("=== 方法3: Q-Former純粋セグメンテーションブリッジ初期化 ===")
+        if enable_moe:
+            print("🔄 Phase 3A: MoE最適化モード有効")
         
         # 1. Llama-4-Scout VLM初期化
         self._init_llama4_model()
@@ -102,10 +118,16 @@ class QFormerSegmentationBridge(nn.Module):
         # 3. SAM2初期化（セグメンテーション）
         self._init_sam2()
         
-        # 4. 損失関数初期化（2025年ベストプラクティス）
+        # 🆕 4. Phase 3A: MoE統合初期化
+        if enable_moe:
+            self._init_moe_adapters()
+        else:
+            self.moe_adapter = None
+        
+        # 5. 損失関数初期化（2025年ベストプラクティス）
         self._init_loss_function()
         
-        # 5. 最終デバイス配置確認・統一
+        # 6. 最終デバイス配置確認・統一
         self._ensure_device_consistency()
         
         print("✅ 方法3 Q-Formerブリッジ初期化完了")
@@ -113,6 +135,8 @@ class QFormerSegmentationBridge(nn.Module):
         print("  - 特徴抽出: Q-Formerのみ")
         print("  - 情報ボトルネック: 解消済み")
         print(f"  - 損失関数: Stage {self.training_stage} 複合損失")
+        if enable_moe:
+            print(f"  - MoE最適化: 有効 ({self.config.moe_config['num_experts']} experts)")
         
     def _init_llama4_model(self):
         """Llama-4-Scout VLM初期化（方法3専用設定）"""
@@ -325,6 +349,58 @@ class QFormerSegmentationBridge(nn.Module):
         print(f"  - Lovász-Softmax Loss: IoU直接最適化")
         print(f"  - Q-Former Loss: マルチモーダル学習")
     
+    def _init_moe_adapters(self):
+        """🆕 Phase 3A: Heterogeneous MoE Adapters初期化"""
+        print(f"\n🔄 Phase 3A: Heterogeneous MoE Adapters初期化中...")
+        
+        try:
+            # ベースモデル辞書準備
+            base_models = {}
+            
+            # Llama-4-Scout追加
+            if hasattr(self, 'llama_model') and self.llama_model is not None:
+                base_models['llama'] = self.llama_model
+                print(f"  ✅ Llama-4-Scout: 言語理解・推論エキスパート")
+            
+            # SAM2追加
+            if hasattr(self, 'sam2') and self.sam2 is not None:
+                # SAM2Wrapperからactualモデルにアクセス
+                if hasattr(self.sam2, 'predictor') and hasattr(self.sam2.predictor, 'model'):
+                    base_models['sam2'] = self.sam2.predictor.model
+                    print(f"  ✅ SAM2: 視覚セグメンテーションエキスパート")
+                else:
+                    print(f"  ⚠️ SAM2モデルアクセス不可: MoEから除外")
+            
+            # Q-Former追加
+            if hasattr(self, 'qformer_model') and self.qformer_model is not None:
+                base_models['qformer'] = self.qformer_model
+                print(f"  ✅ Q-Former: クロスモーダル融合エキスパート")
+            
+            if not base_models:
+                print(f"  ⚠️ ベースモデルが見つかりません: MoE無効化")
+                self.moe_adapter = None
+                return
+            
+            print(f"  📊 MoE構成: {len(base_models)} エキスパート ({list(base_models.keys())})")
+            
+            # MoE Adapter作成
+            self.moe_adapter = create_heterogeneous_moe_adapter(
+                base_models=base_models,
+                moe_config=self.config.moe_config
+            )
+            
+            print(f"✅ Phase 3A: MoE Adapters初期化完了")
+            
+            # MoE統計表示
+            moe_stats = self.moe_adapter.get_moe_statistics()
+            print(f"  - 総エキスパート数: {moe_stats['total_experts']}")
+            print(f"  - 学習可能パラメータ: {moe_stats['total_trainable_params']:,}")
+            
+        except Exception as e:
+            print(f"  ❌ MoE Adapters初期化失敗: {e}")
+            print(f"  🔄 標準モード継続 (MoE無効)")
+            self.moe_adapter = None
+    
     def _ensure_device_consistency(self):
         """全コンポーネントのデバイス配置統一（根本的修正）"""
         print(f"\n🔧 モジュール全体デバイス配置統一中...")
@@ -532,12 +608,38 @@ class QFormerSegmentationBridge(nn.Module):
         # 出力抽出
         qformer_hidden_states = qformer_outputs.last_hidden_state
         print(f"  ✅ Q-Former処理完了: {qformer_hidden_states.shape}")
+        
+        # 🆕 Phase 3A: MoE統合処理
+        moe_info = {}
+        if self.enable_moe and self.moe_adapter is not None:
+            print(f"  🔄 Phase 3A: MoE最適化適用中...")
             
-            
+            try:
+                # Q-Former出力をMoE処理
+                moe_output, moe_stats = self.moe_adapter(
+                    hidden_states=qformer_hidden_states,
+                    expert_type=None  # 自動ルーティング
+                )
+                
+                # MoE処理結果を使用
+                qformer_hidden_states = moe_output
+                moe_info = moe_stats
+                
+                print(f"    ✅ MoE最適化完了: {qformer_hidden_states.shape}")
+                if 'expert_weights' in moe_info:
+                    expert_weights = moe_info['expert_weights']
+                    print(f"    📊 エキスパート重み: {expert_weights}")
+                
+            except Exception as moe_error:
+                print(f"    ⚠️ MoE処理失敗: {moe_error}")
+                print(f"    🔄 標準Q-Former出力継続")
+                moe_info = {'error': str(moe_error)}
+        
         # 出力用辞書作成
         qformer_outputs = {
-            'query_embeds': qformer_hidden_states,  # (batch, 32, 768)
-            'sam_prompts': torch.zeros(batch_size, self.config.qformer_config['num_queries'], 256, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
+            'query_embeds': qformer_hidden_states,  # (batch, 32, 768) or MoE-optimized
+            'sam_prompts': torch.zeros(batch_size, self.config.qformer_config['num_queries'], 256, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype),
+            'moe_info': moe_info  # 🆕 MoE統計情報
         }
         
         # 3. 高精度リッチプロンプト生成（Web調査修正: 768次元）

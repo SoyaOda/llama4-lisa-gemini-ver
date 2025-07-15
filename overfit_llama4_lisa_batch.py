@@ -159,10 +159,16 @@ class LisaOverfitTest:
                 logger.warning("⚠️ device_mapが見つかりません。Model Parallelismが未設定の可能性があります。")
             
             # LoRA設定作成（config_linux統一設定を使用）
+            # Web調査準拠: task_typeの重複を回避
+            lora_config_dict = config_linux.get_lora_config()
+            
+            # 明示的なtask_typeを削除してからTaskType.CAUSAL_LMを設定
+            lora_config_dict.pop('task_type', None)  # 重複回避のため削除
+            
             lora_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM,
+                task_type=TaskType.CAUSAL_LM,    # 明示的に設定
                 inference_mode=False,
-                **config_linux.get_lora_config()
+                **lora_config_dict               # task_type以外のパラメータ
             )
             
             logger.info(f"LoRA設定:")
