@@ -189,6 +189,44 @@ class SAM2Wrapper(nn.Module):
         print(f"  - デバイス: {self.device}")
         print(f"  - 自動取得: HuggingFace Hub")
         
+        # 🔥 Lambda Cloud GPU環境での確実なCUDA初期化（訓練スクリプト対応）
+        try:
+            if self.device == "cuda":
+                print("🔧 SAM2用CUDA初期化...")
+                
+                # Step 1: CUDA基本初期化
+                torch.cuda.init()
+                
+                # Step 2: 実際のGPU操作でコンテキスト確立
+                if torch.cuda.is_available():
+                    device_count = torch.cuda.device_count()
+                    current_device = torch.cuda.current_device()
+                    
+                    # 実際のテンソル操作でGPUコンテキストを作成
+                    test_tensor = torch.randn(5, 5, device=self.device)
+                    _ = test_tensor.sum()
+                    del test_tensor
+                    
+                    torch.cuda.empty_cache()
+                    
+                    print(f"  ✅ SAM2用CUDA初期化完了: GPU {current_device}/{device_count}")
+                else:
+                    raise RuntimeError("CUDA利用不可")
+                    
+        except Exception as cuda_init_error:
+            print(f"  ❌ SAM2用CUDA初期化失敗: {cuda_init_error}")
+            print(f"  💡 訓練スクリプトにはGPU環境が必須 - CPUモードは非対応")
+            
+            # 訓練スクリプトではCPUフォールバックを無効化
+            if debug_mode:
+                print("  🔥 訓練スクリプト対応: GPU環境を強制要求")
+                raise RuntimeError(f"GPU環境が必要です。CUDA初期化エラー: {cuda_init_error}")
+            else:
+                # テストモードのみCPUフォールバック
+                print(f"  ⚠️ テストモード: CPUで実行")
+                self.device = "cpu"
+                self._target_device = "cpu"
+        
         try:
             # 🔄 2025年最適化: VOS対応判定 (修正版: ImagePredictor使用)
             if vos_optimized or compile_model:

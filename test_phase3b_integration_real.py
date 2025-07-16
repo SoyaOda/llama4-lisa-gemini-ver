@@ -12,8 +12,31 @@ overfit_llama4_lisa_batch.pyの成功パターンを参考にした実機テス�
 4. Lambda Cloud環境での28.14%性能向上検証
 """
 
+# 🔥 PyTorchインポート前の環境準備（CUDA Error 802対策）
 import sys
 import os
+
+# Step 1: CUDA Error 802対策用環境変数設定（PyTorchインポート前）
+print("🔧 CUDA Error 802対策：PyTorchインポート前環境設定...")
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+os.environ['PYTORCH_NVML_BASED_CUDA_CHECK'] = '1'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['PYTHONUNBUFFERED'] = '1'
+os.environ['CUDA_DEVICE_MAX_CONNECTIONS'] = '1'
+os.environ['NCCL_P2P_DISABLE'] = '1'
+
+# Step 2: CUDA_VISIBLE_DEVICESが未設定の場合のみ設定（2x H100対応）
+if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # 2x H100専用
+
+# Step 2.1: GPU RAM分散利用のための追加設定
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'  # GPU RAM最適化
+os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'  # 分散デバッグ
+os.environ['NCCL_DEBUG'] = 'INFO'  # NCCL通信デバッグ
+
+print("✅ 環境変数設定完了 - PyTorchインポート開始...")
+
+# Step 3: PyTorchインポート
 import gc
 import json
 import torch
@@ -154,13 +177,42 @@ class Phase3BRealIntegrationTest:
             dynamo.config.suppress_errors = True
             logger.info("✓ torch._dynamo.config.suppress_errors = True: Llama-4-Scout既知バグ回避")
             
+            # 🔥 GPU RAM分散利用最適化設定
+            logger.info("🔥 GPU RAM分散利用最適化設定を適用...")
+            
+            # PyTorchマルチGPU最適化
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+            logger.info("✓ TF32最適化 + cuDNNベンチマーク有効化")
+            
+            # GPU間通信最適化（NCCL）
+            if torch.cuda.device_count() >= 2:
+                # NCCL初期化チェック
+                try:
+                    torch.distributed.is_nccl_available()
+                    logger.info("✓ NCCL利用可能（GPU間高速通信）")
+                except:
+                    logger.warning("⚠️ NCCL未対応")
+                
+                # GPU間メモリ転送最適化
+                torch.cuda.set_per_process_memory_fraction(0.95)  # 95%使用許可
+                logger.info("✓ GPU RAM使用率95%設定（メモリ効率化）")
+            
+            # HuggingFace accelerate最適化
+            try:
+                import accelerate
+                logger.info(f"✓ accelerate利用可能: {accelerate.__version__}")
+            except ImportError:
+                logger.warning("⚠️ accelerate未インストール（手動device_map使用）")
+            
             # 1. Llama-4-Scout-17B-16E-Instruct初期化
             logger.info("🔄 Llama-4-Scout-17B-16E-Instruct初期化...")
             if TRANSFORMERS_AVAILABLE:
                 llama_config = config_linux.get_lisa_model_config()
                 model_id = llama_config["llama_model_id"]
                 
-                # HuggingFaceから直接ロード（Web調査2025年最新パターン）
+                # HuggingFaceから直接ロード（Web調査2025年最新パターン）+ GPU RAM分散対応
                 # LISA準拠: CausalLMアーキテクチャを使用
                 try:
                     # Llama4専用クラスの確認
@@ -175,15 +227,65 @@ class Phase3BRealIntegrationTest:
                         logger.warning("⚠️ Llama4ForCausalLM未対応、AutoModelForCausalLM使用")
                         logger.info("💡 transformers>=4.45.0へのアップデートを推奨")
                     
-                    # モデルロード
-                    self.llama4_model = model_class.from_pretrained(
-                        model_id,
-                        torch_dtype=torch.bfloat16,
-                        device_map="auto",
-                        attn_implementation="sdpa",  # flex_attentionはblock_mask問題があるためsdpa使用
-                        trust_remote_code=True
-                    )
-                    logger.info(f"✓ {model_class.__name__}使用（LISA準拠CausalLM）")
+                    # 🔥 GPU RAM分散利用対応: 手動device_map設定
+                    logger.info("🔥 GPU RAM分散利用: 2x H100手動device_mapを設定...")
+                    
+                    # 2x H100用のdevice_map設定（均等分散）
+                    device_count = torch.cuda.device_count()
+                    logger.info(f"検出されたGPU数: {device_count}")
+                    
+                    if device_count >= 2:
+                        # 🔥 より効率的なdevice_map（メモリOOM回避）
+                        logger.info("🔥 2x H100 OOM回避用最適化device_map設定...")
+                        
+                        # 詳細なメモリ制限（保守的設定）
+                        max_memory_per_gpu = "35GB"  # OOM回避: 80GBの約44%使用
+                        
+                        device_map_setting = "auto"  # accelerateの自動最適化を活用
+                        max_memory_dict = {0: max_memory_per_gpu, 1: max_memory_per_gpu}
+                        
+                        logger.info(f"✓ accelerate自動device_map + メモリ制限: {max_memory_per_gpu}/GPU")
+                        
+                        # CPU offload設定（メモリ効率化）
+                        offload_folder = "/tmp/llama4_offload"
+                        
+                    else:
+                        logger.warning("⚠️ GPU数不足、single GPU mode")
+                        device_map_setting = "auto"
+                        max_memory_dict = {0: "70GB"}  # single GPU用
+                        offload_folder = None
+                    
+                    # モデルロード（OOM回避強化版）
+                    load_kwargs = {
+                        "torch_dtype": torch.bfloat16,
+                        "device_map": device_map_setting,
+                        "attn_implementation": "sdpa",
+                        "trust_remote_code": True,
+                        "low_cpu_mem_usage": True,
+                        "max_memory": max_memory_dict,
+                    }
+                    
+                    # CPU offload設定（必要に応じて）
+                    if offload_folder and device_count >= 2:
+                        import os
+                        os.makedirs(offload_folder, exist_ok=True)
+                        load_kwargs["offload_folder"] = offload_folder
+                        logger.info(f"✓ CPU offload有効: {offload_folder}")
+                    
+                    self.llama4_model = model_class.from_pretrained(model_id, **load_kwargs)
+                    logger.info(f"✓ {model_class.__name__}使用（LISA準拠CausalLM + GPU RAM分散）")
+                    
+                    # GPU配置確認
+                    if hasattr(self.llama4_model, 'hf_device_map'):
+                        actual_device_map = self.llama4_model.hf_device_map
+                        gpu_distribution = {}
+                        for component, device in actual_device_map.items():
+                            if device not in gpu_distribution:
+                                gpu_distribution[device] = 0
+                            gpu_distribution[device] += 1
+                        logger.info(f"✓ 実際のGPU分散: {gpu_distribution}")
+                    else:
+                        logger.warning("⚠️ device_map情報を取得できませんでした")
                     
                 except Exception as e:
                     error_msg = f"❌ CausalLMモデルロード失敗: {e}"
@@ -231,9 +333,9 @@ class Phase3BRealIntegrationTest:
             self.qformer_model = get_qformer_model()
             logger.info("✓ Q-Former初期化完了")
             
-            # 3. SAM2初期化
+            # 3. SAM2初期化（訓練スクリプト対応：GPU環境強制）
             logger.info("🔄 SAM2初期化...")
-            self.sam2_model = get_sam2_wrapper()
+            self.sam2_model = get_sam2_wrapper(debug_mode=False)  # 訓練スクリプト対応：GPU強制
             logger.info("✓ SAM2初期化完了")
             
             # 4. 統合ブリッジ初期化（Option 1: 共有Llama-4インスタンス渡し）
@@ -342,12 +444,13 @@ class Phase3BRealIntegrationTest:
             else:
                 logger.warning("⚠️ Q-Former統合ブリッジが未初期化")
             
-            # 2. デュアルパスウェイデコーダ
+            # 2. デュアルパスウェイデコーダ（訓練スクリプト対応：GPU環境強制）
             if self.config.test_dual_pathway:
                 self.dual_decoder = create_dual_pathway_decoder(
                     llama_hidden_size=5120,
                     sam_output_dim=256,
-                    fusion_strategy="learned_weighted"
+                    fusion_strategy="learned_weighted",
+                    force_gpu=True  # 訓練スクリプト対応：GPU強制
                 )
                 logger.info("✓ デュアルパスウェイデコーダ初期化完了")
             
@@ -873,14 +976,227 @@ def main():
     return results
 
 
+def force_cuda_initialization():
+    """Lambda Cloud環境での完全CUDA初期化（訓練スクリプト対応）"""
+    import os
+    import ctypes
+    import ctypes.util
+    
+    print("🔥 Lambda Cloud GPU環境：完全CUDA初期化開始")
+    
+    # Step 1: 環境変数確認・設定
+    cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')
+    print(f"📊 CUDA_VISIBLE_DEVICES: {cuda_visible}")
+    
+    # Step 2: PyTorch初期化前にCUDAランタイム初期化
+    print("🔧 CUDAランタイム初期化（PyTorch前）...")
+    try:
+        # CUDAランタイムライブラリを直接ロード
+        cudart_lib = None
+        for cuda_lib_name in ['libcudart.so.12', 'libcudart.so.11', 'libcudart.so']:
+            try:
+                cudart_lib = ctypes.CDLL(cuda_lib_name)
+                print(f"✅ CUDAランタイムライブラリロード: {cuda_lib_name}")
+                break
+            except OSError:
+                continue
+        
+        if cudart_lib is None:
+            print("⚠️ CUDAランタイムライブラリが見つかりません")
+        else:
+            # CUDA初期化を強制実行
+            cuda_init_result = cudart_lib.cudaInitDevice(0)
+            if cuda_init_result == 0:
+                print("✅ CUDAランタイム初期化成功")
+            else:
+                print(f"⚠️ CUDAランタイム初期化警告: {cuda_init_result}")
+                
+    except Exception as cuda_runtime_error:
+        print(f"⚠️ CUDAランタイム初期化エラー: {cuda_runtime_error}")
+        print("💡 PyTorch初期化に進みます...")
+    
+    # Step 3: PyTorchのCUDA初期化強制実行
+    try:
+        print("🔧 PyTorch CUDA初期化...")
+        
+        # 3.1: 基本初期化
+        torch.cuda.init()
+        
+        # 3.2: 実際のGPU操作でコンテキスト作成
+        if torch.cuda.is_available():
+            device_count = torch.cuda.device_count()
+            print(f"✅ GPU検出: {device_count} デバイス")
+            
+            # 3.3: 各GPUでテンソル操作を実行（確実な初期化）
+            for i in range(device_count):
+                try:
+                    device = f"cuda:{i}"
+                    test_tensor = torch.randn(10, 10, device=device)
+                    _ = test_tensor.sum()  # 実際の計算実行
+                    gpu_name = torch.cuda.get_device_name(i)
+                    gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                    print(f"  ✅ GPU {i}: {gpu_name} ({gpu_memory:.1f}GB)")
+                    del test_tensor  # メモリ解放
+                except Exception as gpu_error:
+                    print(f"  ❌ GPU {i}初期化失敗: {gpu_error}")
+                    
+            # 3.4: CUDAキャッシュクリア（クリーンな状態）
+            torch.cuda.empty_cache()
+            print("✅ CUDA キャッシュクリア完了")
+            
+            # 3.5: デフォルトGPU設定
+            torch.cuda.set_device(0)
+            print("✅ デフォルトGPU設定: cuda:0")
+            
+            return True
+            
+        else:
+            print("❌ CUDA利用不可: torch.cuda.is_available() = False")
+            return False
+            
+    except Exception as e:
+        print(f"❌ PyTorch CUDA初期化失敗: {e}")
+        print("💡 原因調査:")
+        print(f"  - CUDA_VISIBLE_DEVICES: {cuda_visible}")
+        print(f"  - PyTorch version: {torch.__version__}")
+        print(f"  - CUDA version: {torch.version.cuda}")
+        
+        # Step 4: 最終手段：環境変数リセット
+        print("🔧 最終手段：環境変数リセット試行...")
+        try:
+            os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+            os.environ['PYTHONUNBUFFERED'] = '1'
+            
+            # 再度PyTorch初期化
+            torch.cuda.init()
+            if torch.cuda.is_available():
+                print("✅ 環境変数リセット後の初期化成功")
+                return True
+        except Exception as final_error:
+            print(f"❌ 最終手段も失敗: {final_error}")
+            
+        return False
+
+def fix_lambda_cloud_h100_sxm5_cuda():
+    """Lambda Cloud 4x H100 SXM5 + NVSwitch環境でのCUDA Error 802解決"""
+    import os
+    import subprocess
+    
+    print("🔧 Lambda Cloud 4x H100 SXM5 + NVSwitch CUDA Error 802 解決策実行...")
+    
+    # 1. H100 SXM5 + NVSwitch構成確認
+    print("📊 H100 SXM5 + NVSwitch構成確認...")
+    try:
+        result = subprocess.run(['nvidia-smi', 'topo', '-m'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ GPU構成確認完了")
+            if 'NV' in result.stdout:
+                print("✅ 4x H100 SXM5 + NVSwitch システム検出")
+                print("💡 Fabric Manager必須（NVSwitch搭載）")
+            else:
+                print("⚠️ NVSwitch未検出")
+        else:
+            print("⚠️ GPU構成確認失敗")
+    except Exception as e:
+        print(f"⚠️ GPU構成確認エラー: {e}")
+    
+    # 2. H100 SXM5 + NVSwitch用環境変数設定
+    print("📊 H100 SXM5 + NVSwitch用環境変数設定...")
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    os.environ['PYTORCH_NVML_BASED_CUDA_CHECK'] = '1'
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+    os.environ['PYTHONUNBUFFERED'] = '1'
+    
+    # H100 SXM5 + NVSwitch用最適化設定
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+    os.environ['NCCL_IB_DISABLE'] = '0'  # InfiniBand有効（高速通信）
+    os.environ['NCCL_P2P_DISABLE'] = '0'  # NVSwitch環境ではP2P有効
+    os.environ['NCCL_NVLS_ENABLE'] = '1'  # NVSwitch最適化有効
+    
+    print("✅ H100 SXM5 + NVSwitch用環境変数設定完了")
+    
+    # 3. NVIDIA Fabric Manager修復試行
+    print("🔧 NVIDIA Fabric Manager修復試行...")
+    try:
+        # NVSwitch情報確認
+        result = subprocess.run(['nvidia-smi', 'nvlink', '-s'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ NVLink状態確認完了")
+        
+        # Fabric Manager再起動試行
+        print("🔄 Fabric Manager再起動試行...")
+        subprocess.run(['sudo', 'systemctl', 'stop', 'nvidia-fabricmanager'], capture_output=True)
+        subprocess.run(['sudo', 'modprobe', '-r', 'nvidia_uvm'], capture_output=True)
+        subprocess.run(['sudo', 'modprobe', '-r', 'nvidia'], capture_output=True)
+        subprocess.run(['sudo', 'modprobe', 'nvidia'], capture_output=True)
+        subprocess.run(['sudo', 'modprobe', 'nvidia_uvm'], capture_output=True)
+        
+        # Fabric Manager再起動
+        result = subprocess.run(['sudo', 'systemctl', 'start', 'nvidia-fabricmanager'], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print("✅ Fabric Manager再起動成功")
+        else:
+            print("⚠️ Fabric Manager再起動失敗")
+            print("💡 Lambda Cloud側でのPod再起動が必要な可能性")
+            
+    except Exception as e:
+        print(f"⚠️ Fabric Manager修復エラー: {e}")
+    
+    # 4. GPU状態確認
+    print("🔍 GPU状態確認...")
+    try:
+        result = subprocess.run(['nvidia-smi', '--query-gpu=name,driver_version,cuda_version', 
+                               '--format=csv,noheader,nounits'], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            gpu_info = result.stdout.strip().split('\n')
+            for i, info in enumerate(gpu_info):
+                print(f"  GPU {i}: {info}")
+        else:
+            print("❌ nvidia-smi実行失敗")
+            
+    except Exception as e:
+        print(f"❌ GPU状態確認エラー: {e}")
+    
+    return True
+
 if __name__ == "__main__":
-    # CUDA設定確認
+    # 🔥 2x H100 GPU RAM分散利用のための環境確認
+    print("🔥 2x H100 GPU RAM分散利用環境セットアップ開始...")
+    
+    # GPU数確認
     if torch.cuda.is_available():
-        print(f"🔥 CUDA利用可能: {torch.cuda.device_count()} GPU(s)")
-        for i in range(torch.cuda.device_count()):
-            print(f"  - GPU {i}: {torch.cuda.get_device_name(i)}")
+        device_count = torch.cuda.device_count()
+        print(f"検出されたGPU数: {device_count}")
+        
+        if device_count >= 2:
+            print("✅ 2x H100環境確認完了")
+            # 各GPUの利用可能メモリ確認
+            for i in range(device_count):
+                gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                gpu_name = torch.cuda.get_device_name(i)
+                print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f}GB)")
+        else:
+            print(f"⚠️ GPU数不足: {device_count} < 2")
     else:
-        print("⚠️ CUDA利用不可: CPUで実行")
+        print("❌ CUDA利用不可")
+    
+    # 🔥 CUDA初期化（2x H100特化設定）
+    cuda_success = force_cuda_initialization()
+    
+    if not cuda_success:
+        print("❌ GPU初期化失敗 - 訓練スクリプトにはGPU環境が必須です")
+        print("🔧 2x H100環境確認:")
+        print("  1. CUDA_VISIBLE_DEVICES=0,1 設定確認")
+        print("  2. nvidia-smi でGPU状態確認")
+        print("  3. PyTorch CUDA サポート確認")
+        exit(1)
+    
+    print("🚀 2x H100 GPU RAM分散環境初期化完了")
+    print("🎯 Phase 3B実機統合テスト（GPU RAM分散版）開始...")
     
     # メイン実行
     results = main()

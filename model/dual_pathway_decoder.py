@@ -538,7 +538,8 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
 def create_dual_pathway_decoder(
     llama_hidden_size: int = 5120,
     sam_output_dim: int = 256,
-    fusion_strategy: str = "learned_weighted"
+    fusion_strategy: str = "learned_weighted",
+    force_gpu: bool = False
 ) -> Llama4SAM2DualPathwayDecoder:
     """
     デュアルパスウェイデコーダファクトリ関数
@@ -552,6 +553,13 @@ def create_dual_pathway_decoder(
         Llama4SAM2DualPathwayDecoder instance
     """
     print("🔄 デュアルパスウェイデコーダ作成中...")
+    
+    # GPU環境強制チェック（訓練スクリプト対応）
+    if force_gpu:
+        import torch
+        if not torch.cuda.is_available():
+            raise RuntimeError("訓練スクリプトにはGPU環境が必須です。CUDA利用不可。")
+        print("✅ GPU環境確認完了（訓練スクリプト対応）")
     
     decoder = Llama4SAM2DualPathwayDecoder(
         llama_hidden_size=llama_hidden_size,
