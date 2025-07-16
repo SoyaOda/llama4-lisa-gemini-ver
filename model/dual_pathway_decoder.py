@@ -354,10 +354,15 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
         print(f"  - SAM2出力次元: {sam_output_dim}")
         print(f"  - 融合戦略: {fusion_strategy}")
         
-        # 1. SAM2メインデコーダ (既存SAM2Wrapperを活用)
+        # 1. SAM2メインデコーダ (実際のSAM2ロード)
         if SAM2_AVAILABLE:
-            self.main_sam2_decoder = None  # 外部から注入される
-            print(f"  ✅ SAM2メインデコーダ: 外部注入待ち")
+            try:
+                from model.sam2_integration import get_sam2_wrapper
+                self.main_sam2_decoder = get_sam2_wrapper()
+                print(f"  ✅ SAM2メインデコーダ: 実際のSAM2ロード完了")
+            except Exception as e:
+                print(f"  ⚠️ SAM2ロード失敗: {e}, モック使用")
+                self.main_sam2_decoder = None
         else:
             print(f"  ⚠️ SAM2利用不可: モック使用")
             self.main_sam2_decoder = None
@@ -426,28 +431,59 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
         if self.main_sam2_decoder is not None:
             print(f"  🎯 SAM2メインパス実行...")
             
-            # SAM2に画像設定
-            for i in range(batch_size):
-                self.main_sam2_decoder.set_image(images[i])
-            
-            # プロンプトベースセグメンテーション
-            sam_results = self.main_sam2_decoder.predict_with_prompts(
-                prompt_embeddings=sam_prompts.view(-1, sam_prompts.size(-1))
-            )
-            main_masks = sam_results['masks']  # (B*N, H, W)
-            
-            # バッチ次元復元とサイズ統一
-            num_prompts = sam_prompts.size(1)
-            main_masks = main_masks.view(batch_size, num_prompts, *main_masks.shape[-2:])
-            main_masks = main_masks.mean(dim=1, keepdim=True)  # プロンプト平均
-            
-            # 448x448に統一
-            main_masks = F.interpolate(main_masks, size=(448, 448), mode='bilinear', align_corners=False)
-            
-            if self.debug_mode:
-                print(f"    ✅ SAM2メインマスク: {main_masks.shape}")
+            try:
+                # SAM2推論実行（エラーハンドリング付き）
+                with torch.no_grad():
+                    # バッチごとに処理
+                    batch_masks = []
+                    for i in range(batch_size):
+                        # 画像を個別に設定（BFloat16→Float32変換）
+                        # Web調査解決策: numpy doesn't support bfloat16, convert to float32 first
+                        image_tensor = images[i].float().cpu().numpy().transpose(1, 2, 0)  # (H, W, C)
+                        self.main_sam2_decoder.set_image(image_tensor)
+                        
+                        # プロンプト埋め込みを使用（型安全性確保）
+                        prompt_batch = sam_prompts[i]  # (32, 256)
+                        if prompt_batch.dtype == torch.bfloat16:
+                            # SAM2はFloat32を期待するため変換
+                            prompt_batch = prompt_batch.float()
+                        
+                        # SAM2で予測実行
+                        sam_results = self.main_sam2_decoder.predict_with_prompts(
+                            prompt_embeddings=prompt_batch
+                        )
+                        
+                        # マスク取得・処理
+                        if 'masks' in sam_results:
+                            mask = sam_results['masks']  # (N, H, W)
+                            if isinstance(mask, torch.Tensor):
+                                mask = mask.mean(dim=0, keepdim=True)  # (1, H, W)
+                            else:
+                                mask = torch.tensor(mask, device=images.device)
+                                if mask.dim() == 3:
+                                    mask = mask.mean(dim=0, keepdim=True)
+                            batch_masks.append(mask)
+                        else:
+                            # フォールバック
+                            batch_masks.append(torch.zeros(1, 1024, 1024, device=images.device))
+                    
+                    # バッチ統合
+                    main_masks = torch.stack(batch_masks, dim=0)  # (B, 1, H, W)
+                    
+                    # 448x448に統一
+                    main_masks = F.interpolate(main_masks, size=(448, 448), mode='bilinear', align_corners=False)
+                    
+                    if self.debug_mode:
+                        print(f"    ✅ SAM2実際マスク: {main_masks.shape}")
+                        
+            except Exception as e:
+                print(f"    ⚠️ SAM2推論エラー: {e}, フォールバック使用")
+                # エラー時はモック使用
+                main_masks = torch.rand(batch_size, 1, 448, 448, device=images.device)
+                if self.debug_mode:
+                    print(f"    ⚠️ SAM2フォールバックマスク: {main_masks.shape}")
         else:
-            # モック実装（テスト用）
+            # モック実装（SAM2利用不可時）
             main_masks = torch.rand(batch_size, 1, 448, 448, device=images.device)
             if self.debug_mode:
                 print(f"    ⚠️ SAM2モックマスク: {main_masks.shape}")

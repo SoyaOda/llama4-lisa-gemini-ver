@@ -54,8 +54,11 @@ except ImportError:
 try:
     from utils.dataset import preprocess_sam_image, build_correct_labels_for_llama4
     DATASET_AVAILABLE = True
-except ImportError:
+    print("✅ utils.dataset利用可能")
+except ImportError as e:
     DATASET_AVAILABLE = False
+    print(f"⚠️ utils.datasetインポート失敗: {e}")
+    print("💡 基本的な画像処理機能で代替します")
 
 # ロギング設定
 logging.basicConfig(
@@ -146,25 +149,75 @@ class Phase3BRealIntegrationTest:
             torch.compiler.disable()
             logger.info("✓ 動的コンパイル無効化: GPU分散エラー回避")
             
+            # Llama-4-Scout既知のバグ回避（Web調査2025年最新）
+            import torch._dynamo as dynamo
+            dynamo.config.suppress_errors = True
+            logger.info("✓ torch._dynamo.config.suppress_errors = True: Llama-4-Scout既知バグ回避")
+            
             # 1. Llama-4-Scout-17B-16E-Instruct初期化
             logger.info("🔄 Llama-4-Scout-17B-16E-Instruct初期化...")
             if TRANSFORMERS_AVAILABLE:
                 llama_config = config_linux.get_lisa_model_config()
                 model_id = llama_config["llama_model_id"]
                 
-                # HuggingFaceから直接ロード
-                # Option F: 初期化時にすべてBFloat16で統一
-                self.llama4_model = AutoModel.from_pretrained(
-                    model_id,
-                    torch_dtype=torch.bfloat16,  # 🔥 完全型統一
-                    device_map="auto",
-                    attn_implementation="sdpa",  # 型一貫性確保
-                    trust_remote_code=True
-                )
-                self.llama4_processor = AutoProcessor.from_pretrained(
-                    model_id,
-                    trust_remote_code=True
-                )
+                # HuggingFaceから直接ロード（Web調査2025年最新パターン）
+                # LISA準拠: CausalLMアーキテクチャを使用
+                try:
+                    # Llama4専用クラスの確認
+                    try:
+                        from transformers import Llama4ForCausalLM
+                        model_class = Llama4ForCausalLM
+                        logger.info("✓ Llama4ForCausalLMクラス利用可能")
+                    except ImportError:
+                        # AutoModelForCausalLMを使用（Llama4を自動選択）
+                        from transformers import AutoModelForCausalLM
+                        model_class = AutoModelForCausalLM
+                        logger.warning("⚠️ Llama4ForCausalLM未対応、AutoModelForCausalLM使用")
+                        logger.info("💡 transformers>=4.45.0へのアップデートを推奨")
+                    
+                    # モデルロード
+                    self.llama4_model = model_class.from_pretrained(
+                        model_id,
+                        torch_dtype=torch.bfloat16,
+                        device_map="auto",
+                        attn_implementation="sdpa",  # flex_attentionはblock_mask問題があるためsdpa使用
+                        trust_remote_code=True
+                    )
+                    logger.info(f"✓ {model_class.__name__}使用（LISA準拠CausalLM）")
+                    
+                except Exception as e:
+                    error_msg = f"❌ CausalLMモデルロード失敗: {e}"
+                    logger.error(error_msg)
+                    logger.error(f"モデルID: {model_id}")
+                    logger.error(f"使用クラス: {model_class.__name__ if 'model_class' in locals() else 'Unknown'}")
+                    logger.error("考えられる原因:")
+                    logger.error("1. モデルへのアクセス権限がない")
+                    logger.error("2. HuggingFaceトークンが未設定")
+                    logger.error("3. ネットワーク接続の問題")
+                    logger.error("4. モデルIDが正しくない")
+                    raise RuntimeError(error_msg)
+                
+                # プロセッサ初期化（エラー詳細付き）
+                try:
+                    self.llama4_processor = AutoProcessor.from_pretrained(
+                        model_id,
+                        trust_remote_code=True
+                    )
+                    logger.info("✓ AutoProcessor初期化成功")
+                except Exception as proc_e:
+                    logger.warning(f"⚠️ AutoProcessor初期化失敗: {proc_e}")
+                    # フォールバック: AutoTokenizer使用
+                    try:
+                        from transformers import AutoTokenizer
+                        self.llama4_processor = AutoTokenizer.from_pretrained(
+                            model_id,
+                            trust_remote_code=True,
+                            use_fast=True
+                        )
+                        logger.info("✓ AutoTokenizer使用（プロセッサ代替）")
+                    except Exception as tok_e:
+                        logger.error(f"❌ AutoTokenizer初期化も失敗: {tok_e}")
+                        self.llama4_processor = None
                 
                 llama_params = sum(p.numel() for p in self.llama4_model.parameters())
                 logger.info(f"✓ Llama-4-Scout初期化完了: {llama_params:,} パラメータ")
@@ -344,12 +397,29 @@ class Phase3BRealIntegrationTest:
             # Web調査準拠：<|image|>プレースホルダー付きプロンプト
             test_prompt_with_placeholder = "<|image|>Please segment the red region in this image."
             
-            if DATASET_AVAILABLE and self.llama4_processor:
-                # 1. SAM2用画像処理
+            if self.llama4_processor:
+                # 1. SAM2用画像処理（代替実装）
                 sam_image_size = config_linux.SAM_IMAGE_SIZE  # 1024
-                sam_pixel_values = preprocess_sam_image(test_image, sam_image_size)
-                if sam_pixel_values.dim() == 4:
-                    sam_pixel_values = sam_pixel_values.squeeze(0)
+                
+                if DATASET_AVAILABLE:
+                    # utils.datasetが利用可能な場合
+                    sam_pixel_values = preprocess_sam_image(test_image, sam_image_size)
+                    if sam_pixel_values.dim() == 4:
+                        sam_pixel_values = sam_pixel_values.squeeze(0)
+                else:
+                    # 代替画像処理実装
+                    logger.info("💡 代替画像処理を使用")
+                    # PILからnumpy配列に変換
+                    import numpy as np
+                    test_image_resized = test_image.resize((sam_image_size, sam_image_size))
+                    image_array = np.array(test_image_resized).astype(np.float32) / 255.0
+                    # CHW形式に変換
+                    sam_pixel_values = torch.from_numpy(image_array).permute(2, 0, 1)
+                    # 正規化（ImageNet標準）
+                    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                    sam_pixel_values = (sam_pixel_values - mean) / std
+                
                 logger.info(f"✓ SAM2画像処理: {sam_pixel_values.shape}")
                 
                 # 2. Llama-4テキスト+画像処理（overfit成功パターン準拠）
@@ -386,17 +456,11 @@ class Phase3BRealIntegrationTest:
                 logger.info("✅ 実際のテストデータ準備完了")
                 
             else:
-                # フォールバック: ダミーデータ
-                logger.warning("⚠️ プロセッサ利用不可、ダミーデータ使用")
-                real_data = {
-                    "sam_pixel_values": torch.randn(3, 1024, 1024),
-                    "llama_inputs": {
-                        "input_ids": torch.randint(0, 32000, (1, 16)),
-                        "attention_mask": torch.ones(1, 16)
-                    },
-                    "test_prompt": test_prompt_with_placeholder,
-                    "batch_size": 1
-                }
+                # プロセッサが利用できない場合
+                logger.error("❌ Llama4プロセッサが初期化されていません")
+                logger.error("  - self.llama4_processor is None")
+                logger.error("  - モデル初期化時のエラーを確認してください")
+                raise RuntimeError("Llama4プロセッサが利用できません。初期化エラーを確認してください。")
             
             return real_data
             

@@ -37,12 +37,31 @@ from model.losses_qformer_sam2 import get_composite_loss_qformer_sam2
 from model.moe_adapters import create_heterogeneous_moe_adapter, HeterogeneousMoEAdapter  # 🆕 Phase 3A: MoE統合
 
 try:
-    from transformers import Llama4ForConditionalGeneration, AutoProcessor
+    # LISA準拠: CausalLMアーキテクチャを使用
+    # Web調査結果: Llama4ForCausalLMは存在するが、バージョン依存の可能性
+    from transformers import AutoModelForCausalLM, AutoProcessor
+    
+    # Llama4専用クラスの確認（存在する場合は使用）
+    try:
+        from transformers import Llama4ForCausalLM
+        LLAMA4_MODEL_CLASS = Llama4ForCausalLM
+        print("✅ Llama4ForCausalLM利用可能（LISA推奨）")
+    except ImportError:
+        # Llama4ForCausalLMが利用できない場合はAutoModelForCausalLMを使用
+        LLAMA4_MODEL_CLASS = AutoModelForCausalLM
+        print("⚠️ Llama4ForCausalLM未対応、AutoModelForCausalLM使用")
+        print("💡 transformers>=4.45.0へのアップデートを推奨")
+    
     LLAMA4_AVAILABLE = True
-    print("✅ Llama-4-Scout利用可能")
-except ImportError:
+    print("✅ Llama-4-Scout CausalLMアーキテクチャ利用可能")
+except ImportError as e:
     LLAMA4_AVAILABLE = False
-    print("❌ Llama-4-Scoutが利用できません")
+    LLAMA4_MODEL_CLASS = None
+    error_msg = f"❌ CausalLMモデルクラス import失敗: {e}"
+    print(error_msg)
+    print("❌ transformersライブラリが利用できません")
+    # エラーを再発生させて処理を停止
+    raise ImportError(error_msg)
 
 
 class LlamaQFormerSAM2Config:
