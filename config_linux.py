@@ -24,13 +24,13 @@ import torch  # Web調査修正: torch.bfloat16使用のため
 PROJECT_ROOT = Path(__file__).parent
 
 # データセットベースディレクトリ
-DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", "/lambda/nfs/lisa-gemma-project-fs/data/dataset")
+DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/dataset")
 
 # SAMチェックポイントパス（ViT-H）
-SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", "/lambda/nfs/lisa-gemma-project-fs/data/weights/sam_vit_h_4b8939.pth")
+SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam_vit_h_4b8939.pth")
 
 # SAM2 Checkpoints (2025年ベストプラクティス - Web調査修正版)
-SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-central-texas/data/weights/sam2_hiera_large.pt")
+SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam2_hiera_large.pt")
 SAM2_CONFIG_NAME = "sam2_hiera_l.yaml"  # Web調査ベース正式名
 SAM2_DOWNLOAD_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"  # ✅ 修正: 正しいファイル名
 SAM2_HF_MODEL_ID = "facebook/sam2-hiera-large"  # ✅ HuggingFaceフォールバック用
