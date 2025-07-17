@@ -340,6 +340,11 @@ class DualModalityOHEMLoss(nn.Module):
         """Llama-4言語理解損失計算"""
         batch_size, seq_len, vocab_size = logits.shape
         
+        # Noneチェックとデフォルト値設定
+        if attention_mask is None:
+            logger.warning("attention_maskがNoneです。全トークンを有効として扱います。")
+            attention_mask = torch.ones(batch_size, seq_len, device=logits.device)
+        
         # Reshape for loss calculation
         logits_flat = logits.view(-1, vocab_size)  # (B*seq_len, vocab_size)
         targets_flat = targets.view(-1)            # (B*seq_len,)
@@ -379,6 +384,14 @@ class DualModalityOHEMLoss(nn.Module):
     ) -> torch.Tensor:
         """SAM2セグメンテーション損失計算"""
         batch_size, channels, height, width = predictions.shape
+        
+        # ターゲットのサイズが異なる場合はリサイズ
+        if targets.shape[-2:] != predictions.shape[-2:]:
+            targets = F.interpolate(
+                targets.float(),
+                size=(height, width),
+                mode='nearest'
+            ).long()
         
         # Flatten for loss calculation
         pred_flat = predictions.view(-1)      # (B*H*W,)

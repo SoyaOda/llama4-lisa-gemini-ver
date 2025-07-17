@@ -151,6 +151,13 @@ class AuxiliarySegmentationHead(nn.Module):
                 - aux_masks: 補助マスク予測 (B, 1, H, W)
                 - semantic_logits: セマンティック分類ロジット (B, num_classes) [optional]
         """
+        # 4次元テンソルの場合は3次元に変換
+        if llama_hidden_states.dim() == 4:
+            B, C, H, W = llama_hidden_states.shape
+            # (B, C, H, W) -> (B, H*W, C)
+            llama_hidden_states = llama_hidden_states.view(B, C, H*W).transpose(1, 2)
+            print(f"    - 4次元から3次元に変換: {B, C, H, W} -> {llama_hidden_states.shape}")
+        
         batch_size, seq_len, hidden_size = llama_hidden_states.shape
         
         print(f"  🔄 補助セグメンテーション実行...")
@@ -434,8 +441,17 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
             try:
                 # SAM2推論実行（エラーハンドリング付き）
                 with torch.no_grad():
-                    # バッチごとに処理
+                    # バッチ処理の最適化：可能な限りバッチで処理
                     batch_masks = []
+                    
+                    # デバッグ情報を減らす
+                    if batch_size > 10 and self.debug_mode:
+                        print(f"    ⚡ 大規模バッチ({batch_size})のため、詳細ログを省略")
+                        self.debug_mode = False  # 一時的に無効化
+                        temp_debug_disabled = True
+                    else:
+                        temp_debug_disabled = False
+                    
                     for i in range(batch_size):
                         # 画像を個別に設定（BFloat16→Float32変換）
                         # Web調査解決策: numpy doesn't support bfloat16, convert to float32 first
@@ -466,6 +482,10 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
                         else:
                             # フォールバック
                             batch_masks.append(torch.zeros(1, 1024, 1024, device=images.device))
+                    
+                    # デバッグモード復元
+                    if temp_debug_disabled:
+                        self.debug_mode = True
                     
                     # バッチ統合
                     main_masks = torch.stack(batch_masks, dim=0)  # (B, 1, H, W)

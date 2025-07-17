@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model.llama4_qformer_sam2 import QFormerSegmentationBridge, LlamaQFormerSAM2Config
 from model.losses_qformer_sam2 import get_composite_loss_qformer_sam2
 import config_linux
+from utils.dataset import HybridDataset, preprocess_sam_image, build_correct_labels_for_llama4
 
 def print_header(title: str):
     """Print formatted header"""
@@ -48,150 +49,230 @@ def print_header(title: str):
     logger.info(f"  {title}")
     logger.info("=" * 80)
 
-def create_test_data(model) -> Dict[str, torch.Tensor]:
-    """Create realistic test data for gradient verification (2025 best practices)
+def create_test_data_from_dataset(model, dataset_name='sem_seg') -> Dict[str, torch.Tensor]:
+    """Create test data from actual HybridDataset
     
-    Based on web research for Q-Former + SAM2 integration:
-    - Uses real processor for realistic data pipeline
-    - SAM2 standard input size: 512x512 (downscaled to 448 for compatibility)  
-    - Q-Former requires proper text-image alignment
-    - No requires_grad on input data (only check model parameter gradients)
+    HybridDatasetから実際のデータを取得してテストデータを作成。
+    verify_llama4_lisa_gradients.pyとverify_dataset_integrity.pyの実装に準拠。
     """
     
-    logger.info("📊 現実的テストデータ作成（2025年ベストプラクティス）...")
+    logger.info("📊 HybridDatasetから実際のテストデータ作成...")
+    
+    try:
+        # HybridDataset初期化（verify_dataset_integrity.pyの実装に準拠）
+        from transformers import AutoProcessor
+        from utils.dataset import setup_seg_token
+        
+        # Llama4 Processor取得（Phase 3B統合モデルと同じ）
+        if hasattr(model, 'llama_model') and hasattr(model.llama_model, 'processor'):
+            processor = model.llama_model.processor
+            logger.info("  ✓ llama_model.processorから取得")
+        else:
+            # フォールバック: 直接初期化
+            logger.info("  📦 Llama4 Processor初期化中...")
+            processor = AutoProcessor.from_pretrained(config_linux.LLAMA_MODEL_ID)
+        
+        tokenizer = processor.tokenizer
+        
+        # [SEG]トークンを追加
+        seg_token_idx = setup_seg_token(tokenizer, config_linux.SEG_TOKEN)
+        logger.info(f"  ✅ SEGトークンID: {seg_token_idx}")
+        
+        # HybridDataset初期化
+        logger.info("  📦 HybridDataset初期化中...")
+        dataset = HybridDataset(
+            base_image_dir=config_linux.DATASET_BASE_DIR,
+            llama_processor=processor,
+            samples_per_epoch=100,  # テスト用に少なめ
+            precision="bf16",
+            llama_image_size=config_linux.LLAMA_IMAGE_SIZE,
+            sam_image_size=config_linux.SAM_IMAGE_SIZE,
+            num_classes_per_sample=3,
+            exclude_val=False,
+            dataset=dataset_name,  # 指定されたデータセットのみ使用
+            sample_rate=[1],  # 単一データセット
+            sem_seg_data=config_linux.SEM_SEG_DATA if dataset_name == 'sem_seg' else '',
+            refer_seg_data=config_linux.REFER_SEG_DATA if dataset_name == 'refer_seg' else '',
+            vqa_data=config_linux.VQA_DATA if dataset_name == 'vqa' else '',
+            reason_seg_data=config_linux.REASON_SEG_DATA if dataset_name == 'reason_seg' else '',
+            explanatory=0.1
+        )
+        logger.info(f"  ✅ HybridDataset初期化完了 (サンプル数: {len(dataset)})")
+        
+        # 最初のサンプルを取得
+        sample = dataset[0]
+        logger.info(f"  📂 ソースデータセット: {sample.get('dataset_name', 'unknown')}")
+        
+        # Phase 3B統合モデル用のデータ形式に変換
+        # Q-Former入力は通常の画像（pixel_values）を使用
+        if 'pixel_values' in sample:
+            images = sample['pixel_values'].unsqueeze(0) if sample['pixel_values'].dim() == 3 else sample['pixel_values']
+        else:
+            # フォールバック: SAM画像を使用（リサイズが必要）
+            sam_pixel_values = sample['sam_pixel_values']
+            # SAM画像（1024x1024）をLlama画像サイズ（336x336）にリサイズ
+            import torch.nn.functional as F
+            if sam_pixel_values.dim() == 3:
+                sam_pixel_values = sam_pixel_values.unsqueeze(0)
+            images = F.interpolate(sam_pixel_values, size=(config_linux.LLAMA_IMAGE_SIZE, config_linux.LLAMA_IMAGE_SIZE), mode='bilinear', align_corners=False)
+            logger.info(f"  ⚠️ pixel_valuesなし。SAM画像をリサイズして使用: {images.shape}")
+        
+        # テキスト入力
+        input_ids = sample['input_ids'].unsqueeze(0) if sample['input_ids'].dim() == 1 else sample['input_ids']
+        attention_mask = sample.get('attention_mask')
+        if attention_mask is not None:
+            attention_mask = attention_mask.unsqueeze(0) if attention_mask.dim() == 1 else attention_mask
+        else:
+            attention_mask = torch.ones_like(input_ids)
+        
+        # ラベル（verify_llama4_lisa_gradients.pyと同じ処理）
+        labels = sample.get('labels')
+        if labels is None:
+            # ラベルがない場合は構築
+            labels = build_correct_labels_for_llama4(input_ids.squeeze(0), tokenizer)
+            labels = labels.unsqueeze(0)
+        else:
+            labels = labels.unsqueeze(0) if labels.dim() == 1 else labels
+        
+        # マスク（ground_truth_maskまたはground_truth_masks）
+        target_masks = sample.get('ground_truth_mask') or sample.get('ground_truth_masks')
+        if target_masks is not None:
+            if isinstance(target_masks, list) and len(target_masks) > 0:
+                target_masks = target_masks[0]
+            if isinstance(target_masks, torch.Tensor):
+                if target_masks.dim() == 2:
+                    target_masks = target_masks.unsqueeze(0)  # バッチ次元追加
+            else:
+                target_masks = torch.zeros((1, config_linux.SAM_IMAGE_SIZE, config_linux.SAM_IMAGE_SIZE), dtype=torch.float32)
+        else:
+            # VQAタスクなどマスクがない場合
+            target_masks = torch.zeros((1, config_linux.SAM_IMAGE_SIZE, config_linux.SAM_IMAGE_SIZE), dtype=torch.float32)
+            logger.info("  ℹ️ マスクなし（VQAタスクなど）")
+        
+        # SEGトークンマスク
+        seg_token_mask = sample.get('seg_token_mask')
+        if seg_token_mask is not None:
+            seg_token_mask = seg_token_mask.unsqueeze(0) if seg_token_mask.dim() == 1 else seg_token_mask
+        
+        # 元画像サイズ
+        original_sizes = sample.get('original_size')
+        if original_sizes is not None:
+            original_sizes = [original_sizes]  # リスト形式に
+        
+        # SAM用画像
+        sam_pixel_values = sample.get('sam_pixel_values')
+        if sam_pixel_values is not None:
+            sam_pixel_values = sam_pixel_values.unsqueeze(0) if sam_pixel_values.dim() == 3 else sam_pixel_values
+        
+        # 統合データ辞書作成（Phase 3B統合モデル互換）
+        test_data = {
+            'images': images,  # Q-Former用画像
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'labels': labels,
+            'target_masks': target_masks,
+            'seg_token_mask': seg_token_mask,
+            'sam_pixel_values': sam_pixel_values,
+            'original_sizes': original_sizes,
+            'original_prompt': sample.get('text_prompt', ''),
+            'dataset_type': sample.get('dataset_name', dataset_name),
+            'formatted_prompt': sample.get('formatted_prompt', '')
+        }
+        
+        # データ検証
+        logger.info("  ✅ テストデータ検証:")
+        for key, value in test_data.items():
+            if isinstance(value, torch.Tensor):
+                logger.info(f"    - {key}: {value.shape}, dtype: {value.dtype}")
+            elif value is not None:
+                logger.info(f"    - {key}: {type(value)}")
+        
+        # Llama-4ネイティブフォーマットの確認
+        if '<|image|>' in test_data.get('formatted_prompt', ''):
+            logger.info("  ✅ Llama-4ネイティブ<|image|>トークン検出")
+        
+        # [SEG]トークンの確認
+        if seg_token_mask is not None and seg_token_mask.any():
+            seg_positions = torch.nonzero(seg_token_mask).squeeze().tolist()
+            logger.info(f"  ✅ [SEG]トークン位置: {seg_positions}")
+        
+        logger.info("📊 HybridDatasetからの実データ取得完了")
+        
+        return test_data
+        
+    except Exception as e:
+        logger.error(f"❌ HybridDataset初期化エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        logger.info("⚠️ フォールバック: 合成データを使用")
+        
+        # エラー時は元の合成データ生成にフォールバック
+        return create_synthetic_test_data(model)
+
+def create_synthetic_test_data(model) -> Dict[str, torch.Tensor]:
+    """合成テストデータ作成（フォールバック用）"""
+    
+    logger.info("📊 合成テストデータ作成（フォールバック）...")
     
     test_config = config_linux.get_test_config()
     batch_size = 1
     
-    # 1. リアルな画像データ作成（SAM2推奨: 512x512ベース、448x448にリサイズ）
-    # チェッカーボード + ノイズパターン（よりリアルに）
+    # 1. シンプルなテスト画像作成
     image_size = test_config['image_size']  # 448
     
-    # チェッカーボードベースパターン（SAM2テスト用）
-    checker_size = 64
-    image_array = np.zeros((image_size, image_size, 3), dtype=np.uint8)
+    # 赤い正方形のテスト画像（verify_llama4_lisa_gradients.pyと同じ）
+    test_image = Image.new('RGB', (image_size, image_size), color='red')
+    image_array = np.array(test_image)
     
-    for i in range(0, image_size, checker_size):
-        for j in range(0, image_size, checker_size):
-            if (i // checker_size + j // checker_size) % 2 == 0:
-                # 白い正方形
-                end_i, end_j = min(i + checker_size, image_size), min(j + checker_size, image_size)
-                image_array[i:end_i, j:end_j] = [240, 240, 240]
-            else:
-                # グラデーション正方形
-                end_i, end_j = min(i + checker_size, image_size), min(j + checker_size, image_size)
-                for di in range(end_i - i):
-                    for dj in range(end_j - j):
-                        image_array[i + di, j + dj] = [
-                            int(128 + 64 * di / checker_size),
-                            int(64 + 128 * dj / checker_size), 
-                            int(200 - 100 * (di + dj) / (2 * checker_size))
-                        ]
-    
-    # ランダムノイズ追加（リアリティ向上）
-    noise = np.random.normal(0, 15, image_array.shape).astype(np.int16)
-    image_array = np.clip(image_array.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-    
-    # PyTorchテンソルに変換（勾配追跡なし - ベストプラクティス）
+    # PyTorchテンソルに変換
     images = torch.from_numpy(image_array).permute(2, 0, 1).unsqueeze(0).float()
-    # 正規化（0-1範囲）
     images = images / 255.0
     
-    logger.info(f"  📸 画像生成完了: {images.shape}, 範囲: {images.min():.3f}-{images.max():.3f}")
+    logger.info(f"  📸 画像生成完了: {images.shape}")
     
-    # 2. Q-Former用セグメンテーションプロンプト作成
-    seg_prompts = [
-        "Segment the white checkerboard squares in this image.",
-        "この画像の白いチェッカーボード領域を分割してください。",
-        "Find and segment the bright rectangular regions.",
-    ]
+    # 2. テストプロンプト
+    test_prompt = "Please segment the red region in this image."
+    logger.info(f"  💬 プロンプト: '{test_prompt}'")
     
-    selected_prompt = seg_prompts[0]  # 英語プロンプト使用
-    logger.info(f"  💬 セグメンテーションプロンプト: '{selected_prompt}'")
-    
-    # 3. プロセッサ取得（Model Parallelism対応）
+    # 3. プロセッサ取得
     processor = None
     if hasattr(model, 'llama_model') and hasattr(model.llama_model, 'processor'):
         processor = model.llama_model.processor
-        logger.info("  ✓ llama_model.processor取得")
     elif hasattr(model, 'processor'):
-        processor = model.processor  
-        logger.info("  ✓ model.processor取得")
+        processor = model.processor
+    
+    if processor:
+        # トークナイゼーション
+        text_inputs = processor.tokenizer(
+            test_prompt,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=128
+        )
+        
+        input_ids = text_inputs['input_ids']
+        attention_mask = text_inputs['attention_mask']
     else:
-        # フォールバック: 手動トークナイズ
-        logger.warning("  ⚠️ プロセッサが見つかりません。手動トークナイズに切り替え")
+        # フォールバック
         seq_len = 64
         input_ids = torch.randint(1, 32000, (batch_size, seq_len))
         attention_mask = torch.ones(batch_size, seq_len)
     
-    if processor:
-        # 4. 現実的なトークナイゼーション（Q-Former + Llama-4適応）
-        try:
-            # BLIP-2スタイルプロンプト構築
-            formatted_prompt = f"Question: {selected_prompt} Answer:"
-            
-            # テキストをトークナイズ
-            text_inputs = processor.tokenizer(
-                formatted_prompt,
-                return_tensors="pt",
-                padding="max_length",
-                truncation=True,
-                max_length=128  # Q-Former用に短め
-            )
-            
-            input_ids = text_inputs['input_ids']
-            attention_mask = text_inputs['attention_mask']
-            
-            logger.info(f"  🔤 トークナイゼーション完了: {input_ids.shape}")
-            
-        except Exception as e:
-            logger.warning(f"  ⚠️ プロセッサエラー: {e}. 手動トークナイズ使用")
-            seq_len = 64
-            input_ids = torch.randint(1, 32000, (batch_size, seq_len))
-            attention_mask = torch.ones(batch_size, seq_len)
-    
-    # 5. 現実的な正解マスク作成（SAM2準拠）
+    # 4. ダミーマスク
     mask_size = test_config['mask_size']  # 448
-    target_masks = torch.zeros(batch_size, mask_size, mask_size, dtype=torch.float32)
+    target_masks = torch.ones(batch_size, mask_size, mask_size, dtype=torch.float32)
     
-    # チェッカーボードの白い領域をターゲットとする
-    for i in range(0, mask_size, checker_size):
-        for j in range(0, mask_size, checker_size):
-            if (i // checker_size + j // checker_size) % 2 == 0:
-                end_i = min(i + checker_size, mask_size)
-                end_j = min(j + checker_size, mask_size) 
-                target_masks[0, i:end_i, j:end_j] = 1.0
-    
-    # エッジをソフトにする（より現実的）
-    from scipy.ndimage import gaussian_filter
-    for b in range(batch_size):
-        target_masks[b] = torch.from_numpy(
-            gaussian_filter(target_masks[b].numpy(), sigma=1.5)
-        )
-        target_masks[b] = (target_masks[b] > 0.5).float()
-    
-    logger.info(f"  🎯 正解マスク作成完了: {target_masks.shape}")
-    logger.info(f"  📊 正例率: {target_masks.mean().item():.3f}")
-    
-    # 6. 統合データ辞書作成（HybridDataset互換）
     test_data = {
-        'images': images,  # Q-Former + SAM2用画像
+        'images': images,
         'input_ids': input_ids,
-        'attention_mask': attention_mask, 
+        'attention_mask': attention_mask,
         'target_masks': target_masks,
-        'original_prompt': selected_prompt,
-        'dataset_type': 'gradient_verification_synthetic'
+        'original_prompt': test_prompt,
+        'dataset_type': 'synthetic_fallback'
     }
     
-    # データ検証
-    logger.info("  ✅ テストデータ検証:")
-    for key, value in test_data.items():
-        if isinstance(value, torch.Tensor):
-            logger.info(f"    - {key}: {value.shape}, dtype: {value.dtype}, requires_grad: {value.requires_grad}")
-        else:
-            logger.info(f"    - {key}: {type(value)}")
-    
-    logger.info("📊 現実的テストデータ作成完了（2025年ベストプラクティス準拠）")
+    logger.info("📊 合成テストデータ作成完了")
     
     return test_data
 
@@ -236,14 +317,14 @@ def test_gradient_flow(
     test_data: Dict[str, torch.Tensor],
     device: str
 ) -> Dict[str, Any]:
-    """勾配フローの詳細テスト（2025年ベストプラクティス準拠）"""
+    """勾配フローの詳細テスト（Phase 3B統合モデル対応）"""
     
-    logger.info("🔄 勾配フローテスト実行（2025年ベストプラクティス）...")
+    logger.info("🔄 勾配フローテスト実行（Phase 3B統合モデル）...")
     
-    # Model Parallelismデバイス取得（train_llama4_lisa_single_process.pyのパターン使用）
+    # Model Parallelismデバイス取得（test_phase3b_integration_real.pyのパターン使用）
     first_device = None
     
-    # 複数のアクセス方法を試行（train_llama4_lisa_single_process.pyと同じパターン）
+    # 複数のアクセス方法を試行
     if hasattr(model, 'hf_device_map') and model.hf_device_map:
         first_device = next(iter(model.hf_device_map.values()))
         logger.info("  ✓ device_map (直接アクセス) からデバイス取得")
@@ -260,20 +341,41 @@ def test_gradient_flow(
     
     logger.info(f"  📍 モデルのメインデバイス: {first_device}")
     
-    # データを統一デバイスに移動（2025年ベストプラクティス）
+    # データを統一デバイスに移動（Phase 3B用に拡張）
     images = test_data['images'].to(first_device)
     input_ids = test_data['input_ids'].to(first_device)
     attention_mask = test_data['attention_mask'].to(first_device)
     target_masks = test_data['target_masks'].to(first_device)
+    
+    # Phase 3B固有のデータ（存在する場合）
+    labels = test_data.get('labels')
+    if labels is not None:
+        labels = labels.to(first_device)
+    
+    seg_token_mask = test_data.get('seg_token_mask')
+    if seg_token_mask is not None:
+        seg_token_mask = seg_token_mask.to(first_device)
+    
+    sam_pixel_values = test_data.get('sam_pixel_values')
+    if sam_pixel_values is not None:
+        sam_pixel_values = sam_pixel_values.to(first_device)
+    
+    original_sizes = test_data.get('original_sizes')
     
     logger.info(f"  📍 入力データデバイス移動完了: {first_device}")
     logger.info(f"  📊 入力データ形状:")
     logger.info(f"    - images: {images.shape}, device: {images.device}")
     logger.info(f"    - input_ids: {input_ids.shape}, device: {input_ids.device}")
     logger.info(f"    - target_masks: {target_masks.shape}, device: {target_masks.device}")
+    if labels is not None:
+        logger.info(f"    - labels: {labels.shape}, device: {labels.device}")
+    if seg_token_mask is not None:
+        logger.info(f"    - seg_token_mask: {seg_token_mask.shape}, has SEG: {seg_token_mask.any().item()}")
+    if sam_pixel_values is not None:
+        logger.info(f"    - sam_pixel_values: {sam_pixel_values.shape}, device: {sam_pixel_values.device}")
     
-    # PyTorch 2025年推奨: gradient anomaly detection (デバッグ用)
-    with torch.autograd.detect_anomaly(enabled=True):
+    # PyTorch gradient anomaly detection (デバッグ用)
+    with torch.autograd.detect_anomaly():
         # フォワードパス
         model.train()
         model.zero_grad(set_to_none=True)  # 2025年推奨: メモリ効率化
@@ -448,14 +550,57 @@ def run_comprehensive_gradient_test():
         
         device = "cuda"
         
-        # 2. モデル初期化
+        # 2. モデル初期化（Phase 3B統合モデルと同じ設定）
         print_header("2. モデル初期化")
         
+        # LlamaQFormerSAM2Configを初期化（パラメータなし）
         config = LlamaQFormerSAM2Config()
         logger.info(f"📋 設定: {config.llama_model_id}")
         
-        model = QFormerSegmentationBridge(config=config, training_stage=2)  # Stage 2で複合損失
-        logger.info("✅ モデル初期化成功")
+        # test_phase3b_integration_real.pyと同じ方法でLlama-4モデルを事前初期化
+        logger.info("📦 Llama-4-Scout事前初期化開始...")
+        
+        # 2x H100用のメモリ設定
+        max_memory = {
+            0: "35GB",
+            1: "35GB",
+            "cpu": "100GB"
+        }
+        
+        # 共有Llamaモデルの初期化（test_phase3b_integration_real.pyと同じ）
+        from transformers import AutoModelForCausalLM, AutoProcessor
+        
+        try:
+            # プロセッサ初期化
+            shared_processor = AutoProcessor.from_pretrained(
+                config_linux.LLAMA_MODEL_ID,
+                trust_remote_code=True
+            )
+            
+            # モデル初期化（device_map="auto"で自動分散）
+            shared_llama_model = AutoModelForCausalLM.from_pretrained(
+                config_linux.LLAMA_MODEL_ID,
+                device_map="auto",
+                max_memory=max_memory,
+                offload_folder="/tmp/llama4_offload",
+                torch_dtype=config_linux.TORCH_DTYPE,
+                attn_implementation=config_linux.ATTN_IMPLEMENTATION,
+                trust_remote_code=True
+            )
+            logger.info("✅ Llama-4-Scout事前初期化成功")
+            
+        except Exception as e:
+            logger.error(f"❌ Llama-4-Scout初期化失敗: {e}")
+            raise
+        
+        # 共有インスタンスを渡してモデル初期化
+        model = QFormerSegmentationBridge(
+            config=config,
+            shared_llama_model=shared_llama_model,
+            shared_llama_processor=shared_processor,
+            training_stage=2  # Stage 2で複合損失
+        )
+        logger.info("✅ QFormerSegmentationBridgeモデル初期化成功")
         
         # 3. モデル分析
         print_header("3. モデルコンポーネント分析")
@@ -469,7 +614,7 @@ def run_comprehensive_gradient_test():
         # 4. テストデータ作成
         print_header("4. テストデータ作成")
         
-        test_data = create_test_data(model)
+        test_data = create_test_data_from_dataset(model)
         
         # 5. 勾配フローテスト（複数段階）
         for stage in [1, 2, 3]:

@@ -23,14 +23,36 @@ import torch  # Web調査修正: torch.bfloat16使用のため
 # ==============================================================================
 PROJECT_ROOT = Path(__file__).parent
 
+# Lambda Cloudのファイルシステム自動検出
+def get_lambda_fs_path(relative_path):
+    """Lambda Cloudのファイルシステムパスを自動検出"""
+    possible_roots = [
+        "/lambda/nfs/llama4-lisa-project-fs-north-texas",
+        "/lambda/nfs/llama4-lisa-project-fs-central-texas",
+        "/lambda/nfs/lisa-gemma-project-fs"  # 旧パスも念のため
+    ]
+    
+    for root in possible_roots:
+        full_path = os.path.join(root, relative_path)
+        # ディレクトリまたはファイルが存在するか確認
+        if os.path.exists(full_path) or os.path.exists(os.path.dirname(full_path)):
+            return full_path
+    
+    # 環境変数で明示的に指定されている場合はそれを使用
+    if "LAMBDA_FS_ROOT" in os.environ:
+        return os.path.join(os.environ["LAMBDA_FS_ROOT"], relative_path)
+    
+    # デフォルトはnorth-texasを返す
+    return os.path.join(possible_roots[0], relative_path)
+
 # データセットベースディレクトリ
-DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/dataset")
+DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", get_lambda_fs_path("data/dataset"))
 
 # SAMチェックポイントパス（ViT-H）
-SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam_vit_h_4b8939.pth")
+SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", get_lambda_fs_path("data/weights/sam_vit_h_4b8939.pth"))
 
 # SAM2 Checkpoints (2025年ベストプラクティス - Web調査修正版)
-SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam2_hiera_large.pt")
+SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", get_lambda_fs_path("data/weights/sam2_hiera_large.pt"))
 SAM2_CONFIG_NAME = "sam2_hiera_l.yaml"  # Web調査ベース正式名
 SAM2_DOWNLOAD_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"  # ✅ 修正: 正しいファイル名
 SAM2_HF_MODEL_ID = "facebook/sam2-hiera-large"  # ✅ HuggingFaceフォールバック用
