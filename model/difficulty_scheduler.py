@@ -245,16 +245,27 @@ class DifficultyBasedScheduler:
         """OHEM損失による困難度評価（Phase 3B活用）"""
         try:
             with torch.no_grad():
-                # 簡易推論による損失計算
-                # 実際の実装では、モデルの forward pass が必要
+                # 事前計算済みの場合は使用
                 if 'ohem_loss' in sample:
-                    # 事前計算済みの場合
                     ohem_loss = sample['ohem_loss']
+                elif hasattr(self, 'model') and self.model is not None:
+                    # モデルが利用可能な場合は実際に推論
+                    ohem_loss = self._compute_ohem_loss_for_sample(sample)
                 else:
-                    # ダミー実装（実際にはモデル推論が必要）
-                    ohem_loss = np.random.random() * 2.0  # 0-2の範囲
+                    # モデルが利用できない場合は他の困難度指標から推定
+                    text_diff = self._evaluate_text_difficulty(sample)
+                    visual_diff = self._evaluate_visual_difficulty(sample)
+                    multimodal_diff = self._evaluate_multimodal_alignment(sample)
+                    
+                    # 重み付き平均で擬似OHEM損失を計算
+                    weights = [0.3, 0.4, 0.3]  # テキスト、視覚、マルチモーダル
+                    difficulties = [text_diff, visual_diff, multimodal_diff]
+                    
+                    # 困難度が高いほど損失も高いと仮定
+                    estimated_loss = sum(w * d for w, d in zip(weights, difficulties)) * 2.0
+                    ohem_loss = estimated_loss
                 
-                # 損失を0-1に正規化
+                # 損失を0-1に正規化（sigmoid的な変換）
                 difficulty_score = 1.0 - np.exp(-ohem_loss / 2.0)
                 
                 return np.clip(difficulty_score, 0.0, 1.0)
@@ -262,6 +273,57 @@ class DifficultyBasedScheduler:
         except Exception as e:
             logger.warning(f"OHEM困難度評価エラー: {e}")
             return 0.5  # デフォルト中程度
+    
+    def _compute_ohem_loss_for_sample(self, sample: Dict[str, Any]) -> float:
+        """実際のモデル推論によるOHEM損失計算"""
+        try:
+            # バッチサイズ1で推論
+            batch = self._prepare_single_sample_batch(sample)
+            
+            # モデル推論
+            with torch.no_grad():
+                outputs = self.model(batch)
+                
+                # OHEM損失計算（Phase 3Bのohem_loss使用）
+                if hasattr(self, 'ohem_loss_fn') and self.ohem_loss_fn is not None:
+                    loss = self.ohem_loss_fn(outputs, batch)
+                    return loss.item()
+                else:
+                    # 通常の損失を代用
+                    if 'loss' in outputs:
+                        return outputs['loss'].item()
+                    else:
+                        return 1.0  # デフォルト値
+        except Exception as e:
+            logger.debug(f"モデル推論エラー: {e}")
+            return 1.0  # エラー時はデフォルト値
+    
+    def _prepare_single_sample_batch(self, sample: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """単一サンプルをバッチ形式に変換"""
+        batch = {}
+        
+        # 各フィールドをバッチ次元追加
+        for key, value in sample.items():
+            if isinstance(value, torch.Tensor):
+                batch[key] = value.unsqueeze(0)  # バッチ次元追加
+            elif isinstance(value, np.ndarray):
+                batch[key] = torch.from_numpy(value).unsqueeze(0)
+            elif key in ['text', 'input_ids', 'attention_mask']:
+                # テキスト関連は特殊処理が必要な場合
+                if isinstance(value, list):
+                    batch[key] = value
+                else:
+                    batch[key] = [value]
+            else:
+                batch[key] = value
+        
+        return batch
+    
+    def set_model_and_loss(self, model: Optional[nn.Module] = None, 
+                          ohem_loss_fn: Optional[nn.Module] = None):
+        """モデルとOHEM損失関数を設定（実際の推論用）"""
+        self.model = model
+        self.ohem_loss_fn = ohem_loss_fn
     
     def schedule_curriculum_batch(
         self,

@@ -1,12 +1,19 @@
-# test_phase3c_integration_real.py
+# train_phase3c_metap_curriculum.py
 """
-Phase 3C統合テスト: MetaP + カリキュラム学習 + Phase 3B機能（実データ版）
+Phase 3C統合学習スクリプト: MetaP + カリキュラム学習 + Phase 3B機能
 
-Lambda Cloud実機検証用スクリプト（H100 80GB x2）
-- 実際のHybridDatasetを使用した統合テスト
-- MetaP動的ハイパーパラメータ最適化検証
-- カリキュラム学習効果測定
-- Phase 3B機能との相乗効果確認
+Lambda Cloud実機学習用スクリプト（H100 80GB x2）
+- 実際のHybridDatasetを使用したフル学習
+- MetaP動的ハイパーパラメータ最適化
+- カリキュラム学習による段階的学習
+- Phase 3B機能との統合
+
+実行例:
+# 短縮テスト
+CUDA_VISIBLE_DEVICES=0,1 python train_phase3c_metap_curriculum.py --exp_name phase3c_test --epochs 3 --samples_per_epoch 50
+
+# 本格学習
+CUDA_VISIBLE_DEVICES=0,1 python train_phase3c_metap_curriculum.py --exp_name phase3c_full --epochs 10 --dataset reason_seg
 
 目標:
 - 学習効率: 10倍高速化（MetaP 5倍 × Curriculum 2倍）
@@ -15,6 +22,8 @@ Lambda Cloud実機検証用スクリプト（H100 80GB x2）
 
 import sys
 import os
+import argparse
+from datetime import datetime
 
 # CUDA Error対策（test_phase3b_integration_real.py準拠）
 print("🔧 CUDA Error 802対策：PyTorchインポート前環境設定...")
@@ -40,6 +49,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
@@ -47,6 +57,19 @@ from pathlib import Path
 import time
 import numpy as np
 from PIL import Image
+import matplotlib
+matplotlib.use('Agg')  # 非対話モード
+import matplotlib.pyplot as plt
+
+# メモリ最適化用
+try:
+    import bitsandbytes as bnb
+    BITSANDBYTES_AVAILABLE = True
+except ImportError:
+    BITSANDBYTES_AVAILABLE = False
+    print("⚠️ bitsandbytes not available. Using standard AdamW optimizer.")
+
+from transformers import get_cosine_schedule_with_warmup
 
 # プロジェクト固有のインポート
 sys.path.append('.')
@@ -63,7 +86,7 @@ from model.curriculum_integration import (
 )
 
 # MoE統合（Phase 3C完全版）
-from model.moe_adapters import HeterogeneousMoEAdapter, DynamicRouter, LoRAExpert
+from model.moe_adapters import HeterogeneousMoEAdapter, DynamicRouter, LoRAExpert, create_heterogeneous_moe_adapter
 
 # Phase 3B実装（検証済み）
 from model.dual_pathway_decoder import create_dual_pathway_decoder
@@ -74,10 +97,13 @@ from model.ohem_loss import create_ohem_loss
 from model.llama4_qformer_sam2 import QFormerSegmentationBridge, LlamaQFormerSAM2Config
 from model.sam2_integration import get_sam2_wrapper
 from model.qformer import get_qformer_model
+from model.moe_adapters import create_heterogeneous_moe_adapter
 
-# 🔥 実際のデータセット使用（test_phase3b_integration_real.py + train_llama4_lisa_single_process.py準拠）
+# 🔥 実際のモデルとデータセット（train_llama4_lisa_single_process.py準拠）
+from model.llama4_lisa import LisaLlama4ForCausalLM, LisaLlama4Config
 from utils.dataset import HybridDataset, collate_fn, preprocess_sam_image, build_correct_labels_for_llama4
 from utils.constants import DEFAULT_SEG_TOKEN
+from utils.utils import AverageMeter, ProgressMeter
 
 # 設定
 import config_linux
@@ -98,37 +124,49 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Phase3CRealTestConfig:
-    """Phase 3C実データテスト設定"""
+class Phase3CTrainingConfig:
+    """Phase 3C学習設定"""
     # 基本設定
-    output_dir: str = "./phase3c_real_test_results"
-    test_name: str = "phase3c_metap_curriculum_real_data"
+    exp_name: str = "phase3c_training"
+    output_dir: str = "./phase3c_training_results"
+    log_dir: str = "./phase3c_logs"
     
-    # テスト設定
-    test_metap_standalone: bool = True
-    test_curriculum_standalone: bool = True
-    test_full_integration: bool = True
-    test_phase3b_compatibility: bool = True
-    test_moe_integration: bool = True  # MoE統合テスト追加
+    # 学習設定
+    epochs: int = 10
+    batch_size: int = 1  # OOM回避: Phase 3B準拠
+    learning_rate: float = 1e-4
+    weight_decay: float = 0.05
+    gradient_accumulation_steps: int = 16
+    gradient_clip_norm: float = 1.0
+    
+    # スケジューラー設定
+    warmup_ratio: float = 0.1
     
     # パフォーマンス目標
     target_speedup: float = 10.0  # 10倍高速化
     target_improvement: float = 40.0  # 40%精度向上
     
-    # 実行設定
-    num_test_epochs: int = 3  # 短縮テスト
-    test_batch_size: int = 1  # OOM回避: Phase 3B準拠
-    
     # 🔥 実データセット設定（train_llama4_lisa_single_process.py準拠）
     dataset_type: str = "reason_seg"  # reason_seg, refer_seg, vqa, sem_seg
-    samples_per_epoch: int = 50  # 実データセットのサンプル数
+    samples_per_epoch: int = 1000  # フル学習用
     num_classes_per_sample: int = 3
     exclude_val: bool = False
     sample_rate: List[int] = None  # [9, 3, 3, 1] for multi-dataset
+    workers: int = 0  # DataLoaderワーカー数
     
     # LoRA設定（Phase 3B準拠）
     lora_rank: int = 16
     lora_alpha: int = 32
+    
+    # Phase 3C機能設定
+    enable_metap: bool = True
+    enable_curriculum: bool = True
+    enable_moe: bool = True  # MoE統合有効化
+    
+    # ログ・保存設定
+    save_freq: int = 1  # エポック毎に保存
+    log_freq: int = 10  # ステップ毎のログ頻度
+    steps_per_epoch: Optional[int] = None  # 制限なし
     
     def __post_init__(self):
         """出力ディレクトリ作成 + config_linux設定統合"""
@@ -147,23 +185,23 @@ class Phase3CRealTestConfig:
         if self.sample_rate is None:
             self.sample_rate = [9, 3, 3, 1]  # デフォルト比率
         
-        logger.info(f"📋 Phase 3C実データテスト設定:")
+        logger.info(f"📋 Phase 3C学習設定:")
         logger.info(f"  - データセット: {self.dataset_type}")
         logger.info(f"  - サンプル数/エポック: {self.samples_per_epoch}")
-        logger.info(f"  - バッチサイズ: {self.test_batch_size}")
+        logger.info(f"  - バッチサイズ: {self.batch_size}")
+        logger.info(f"  - エポック数: {self.epochs}")
 
 
-class Phase3CRealIntegrationTest:
-    """Phase 3C実データ統合テストクラス"""
+class Phase3CTrainer:
+    """Phase 3C統合学習クラス"""
     
-    def __init__(self, config: Phase3CRealTestConfig):
+    def __init__(self, config: Phase3CTrainingConfig):
         self.config = config
-        self.results = {
-            "test_config": config.__dict__,
-            "metap_results": {},
-            "curriculum_results": {},
-            "integration_results": {},
-            "performance_metrics": {}
+        self.training_stats = {
+            "config": config.__dict__,
+            "epoch_results": [],
+            "best_loss": float('inf'),
+            "best_epoch": 0
         }
         
         # モデル関連の保存（test_phase3b_integration_real.py準拠）
@@ -176,6 +214,14 @@ class Phase3CRealIntegrationTest:
         # 🔥 実データセット関連
         self.real_dataset = None
         self.real_dataloader = None
+        
+        # 学習関連
+        self.optimizer = None
+        self.scheduler = None
+        self.writer = None  # TensorBoard
+        
+        # MoE統合
+        self.moe_adapter = None
         
         # デバイス設定
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -201,20 +247,20 @@ class Phase3CRealIntegrationTest:
         logger.info("=== モデル一括初期化完了 ===")
     
     def create_real_model(self) -> nn.Module:
-        """実際のLlama-4統合モデル作成（test_phase3b_integration_real.py準拠）"""
+        """LISA-Llama4統合モデル作成（train_llama4_lisa_single_process.py準拠）"""
         # 既存のモデルがあれば再利用
         if hasattr(self, 'llama4_model') and self.llama4_model is not None:
-            logger.info("✅ 既存のLlama-4モデルを再利用")
+            logger.info("✅ 既存のLISA-Llama4モデルを再利用")
             return self.llama4_model
         
-        logger.info("=== 実際のモデル初期化 (Llama-4 + SAM2 + Q-Former) ===")
+        logger.info("=== LISA-Llama4統合モデル初期化 ===")
         
         try:
-            # 動的コンパイル無効化（安定性のため）
+            # 動的コンパイル無効化（test_phase3c_integration_real.py準拠）
             torch.compiler.disable()
             logger.info("✓ 動的コンパイル無効化: GPU分散エラー回避")
             
-            # Llama-4-Scout既知のバグ回避
+            # torch._dynamo設定
             import torch._dynamo as dynamo
             dynamo.config.suppress_errors = True
             logger.info("✓ torch._dynamo.config.suppress_errors = True")
@@ -230,182 +276,136 @@ class Phase3CRealIntegrationTest:
                 torch.cuda.set_per_process_memory_fraction(0.95)
                 logger.info("✓ GPU RAM使用率95%設定")
             
-            # Llama-4-Scout初期化
-            logger.info("🔄 Llama-4-Scout-17B-16E-Instruct初期化...")
+            # Llama-4モデル設定（test_phase3c_integration_real.py準拠）
             llama_config = config_linux.get_lisa_model_config()
             model_id = llama_config["llama_model_id"]
             
+            logger.info(f"🔄 {model_id}初期化...")
+            
+            # GPU分散設定（test_phase3c_integration_real.py準拠）
+            device_count = torch.cuda.device_count()
+            if device_count >= 2:
+                logger.info(f"🔥 {device_count}x GPU分散利用設定（OOM回避版）...")
+                
+                # Phase 3B準拠: 保守的なメモリ制限
+                max_memory_per_gpu = "35GB"  # OOM回避: 80GBの約44%使用
+                device_map = "auto"  # accelerateの自動最適化を活用
+                max_memory = {i: max_memory_per_gpu for i in range(device_count)}
+                max_memory["cpu"] = "30GB"  # CPU offload増加
+                
+                # CPU offload設定
+                offload_folder = "/tmp/phase3c_train_offload"
+                os.makedirs(offload_folder, exist_ok=True)
+                
+                logger.info(f"✓ accelerate自動device_map + メモリ制限: {max_memory_per_gpu}/GPU")
+                logger.info(f"✓ CPU offload有効: {offload_folder}")
+            else:
+                logger.warning("⚠️ GPU数不足、single GPU mode")
+                device_map = "auto"
+                max_memory = {0: "70GB"}  # single GPU用
+                offload_folder = None
+            
+            # モデルロード（test_phase3c_integration_real.py準拠）
             try:
-                # Llama4専用クラスの確認
+                from transformers import Llama4ForCausalLM
+                model_class = Llama4ForCausalLM
+                logger.info("✓ Llama4ForCausalLMクラス利用可能")
+            except ImportError:
+                from transformers import AutoModelForCausalLM
+                model_class = AutoModelForCausalLM
+                logger.warning("⚠️ AutoModelForCausalLM使用")
+            
+            load_kwargs = {
+                "torch_dtype": torch.bfloat16,
+                "device_map": device_map,
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                "max_memory": max_memory,
+            }
+            
+            # CPU offload設定（必要に応じて）
+            if 'offload_folder' in locals() and offload_folder and device_count >= 2:
+                load_kwargs["offload_folder"] = offload_folder
+            
+            model = model_class.from_pretrained(model_id, **load_kwargs)
+            logger.info(f"✅ Llama-4モデルロード完了")
+            
+            # プロセッサ初期化
+            try:
+                self.llama4_processor = AutoProcessor.from_pretrained(
+                    model_id,
+                    trust_remote_code=True
+                )
+                logger.info("✓ AutoProcessor初期化成功")
+            except Exception as e:
+                logger.warning(f"⚠️ AutoProcessor初期化失敗: {e}")
                 try:
-                    from transformers import Llama4ForCausalLM
-                    model_class = Llama4ForCausalLM
-                    logger.info("✓ Llama4ForCausalLMクラス利用可能")
-                except ImportError:
-                    from transformers import AutoModelForCausalLM
-                    model_class = AutoModelForCausalLM
-                    logger.warning("⚠️ AutoModelForCausalLM使用")
-                
-                # GPU分散設定（Phase 3B準拠: 保守的設定）
-                device_count = torch.cuda.device_count()
-                if device_count >= 2:
-                    logger.info(f"🔥 {device_count}x GPU分散利用設定（OOM回避版）...")
-                    
-                    # Phase 3B準拠: 保守的なメモリ制限
-                    max_memory_per_gpu = "35GB"  # OOM回避: 80GBの約44%使用
-                    device_map = "auto"  # accelerateの自動最適化を活用
-                    max_memory = {i: max_memory_per_gpu for i in range(device_count)}
-                    max_memory["cpu"] = "30GB"  # CPU offload増加
-                    
-                    # CPU offload設定（Phase 3B準拠）
-                    offload_folder = "/tmp/phase3c_real_offload"
-                    os.makedirs(offload_folder, exist_ok=True)
-                    
-                    logger.info(f"✓ accelerate自動device_map + メモリ制限: {max_memory_per_gpu}/GPU")
-                    logger.info(f"✓ CPU offload有効: {offload_folder}")
-                else:
-                    logger.warning("⚠️ GPU数不足、single GPU mode")
-                    device_map = "auto"
-                    max_memory = {0: "70GB"}  # single GPU用
-                    offload_folder = None
-                
-                # モデルロード（Phase 3B準拠: OOM回避強化版）
-                load_kwargs = {
-                    "torch_dtype": torch.bfloat16,
-                    "device_map": device_map,
-                    "trust_remote_code": True,
-                    "low_cpu_mem_usage": True,
-                    "max_memory": max_memory,
-                }
-                
-                # CPU offload設定（必要に応じて）
-                if 'offload_folder' in locals() and offload_folder and device_count >= 2:
-                    load_kwargs["offload_folder"] = offload_folder
-                
-                model = model_class.from_pretrained(model_id, **load_kwargs)
-                logger.info(f"✅ Llama-4モデルロード完了")
-                
-                # プロセッサ初期化
-                try:
-                    self.llama4_processor = AutoProcessor.from_pretrained(
+                    self.llama4_processor = AutoTokenizer.from_pretrained(
                         model_id,
-                        trust_remote_code=True
+                        trust_remote_code=True,
+                        use_fast=True
                     )
-                    logger.info("✓ AutoProcessor初期化成功")
-                except Exception as e:
-                    logger.warning(f"⚠️ AutoProcessor初期化失敗: {e}")
-                    try:
-                        self.llama4_processor = AutoTokenizer.from_pretrained(
-                            model_id,
-                            trust_remote_code=True,
-                            use_fast=True
-                        )
-                        logger.info("✓ AutoTokenizer使用（プロセッサ代替）")
-                    except:
-                        self.llama4_processor = None
+                    logger.info("✓ AutoTokenizer使用（プロセッサ代替）")
+                except:
+                    logger.error("❌ プロセッサ初期化完全失敗")
+                    self.llama4_processor = None
+            
+            # モデルをインスタンス変数に保存
+            self.llama4_model = model
+            
+            # MoE統合（Phase 3C完全版）
+            if self.config.enable_moe:
+                logger.info("\n=== MoE統合開始 ===")
                 
-                # SAM2とQ-Former初期化
+                # SAM2とQ-Former初期化（まだない場合）
                 if not hasattr(self, 'sam2_model') or self.sam2_model is None:
                     logger.info("🔄 SAM2初期化...")
                     self.sam2_model = get_sam2_wrapper(debug_mode=False)
                     logger.info("✓ SAM2初期化完了")
-                else:
-                    logger.info("✅ 既存のSAM2モデルを再利用")
                 
                 if not hasattr(self, 'qformer_model') or self.qformer_model is None:
                     logger.info("🔄 Q-Former初期化...")
                     self.qformer_model = get_qformer_model()
                     logger.info("✓ Q-Former初期化完了")
-                else:
-                    logger.info("✅ 既存のQ-Formerモデルを再利用")
                 
-                # LoRA設定を追加（Phase 3C用）
-                model.peft_config = type('PEFTConfig', (), {
-                    'r': self.config.lora_rank,
-                    'lora_alpha': self.config.lora_alpha
-                })()
+                # ベースモデル辞書作成
+                base_models = {
+                    "llama": model,  # Llama-4モデル
+                    "sam2": self.sam2_model if self.sam2_model is not None else self._create_dummy_sam2(),
+                    "qformer": self.qformer_model if self.qformer_model is not None else self._create_dummy_qformer()
+                }
                 
-                # モデルをインスタンス変数に保存
-                self.llama4_model = model
+                # MoE Adapter作成
+                moe_config = {
+                    "num_experts": 3,  # Vision, Language, Fusion
+                    "active_experts": 2,  # Top-k
+                    "lora_rank": self.config.lora_rank,  # 論文準拠: 16
+                    "lora_alpha": self.config.lora_alpha,  # 論文準拠: 32
+                    "expert_capacity_factor": 1.25,
+                    "load_balancing": True
+                }
                 
-                # MoE統合（Phase 3C完全版）
-                if self.config.test_moe_integration:
-                    logger.info("\n=== MoE統合開始 ===")
-                    
-                    # ベースモデル辞書作成
-                    base_models = {
-                        "llama": model,  # Llama-4モデル
-                    }
-                    
-                    # SAM2モデル追加
-                    if self.sam2_model is not None:
-                        base_models["sam2"] = self.sam2_model
-                    else:
-                        # ダミーSAM2
-                        class DummySAM2(nn.Module):
-                            def __init__(self):
-                                super().__init__()
-                                self.config = type('Config', (), {'hidden_size': 256})()
-                                self.image_encoder = nn.Linear(256, 256)
-                            
-                            def forward(self, x):
-                                return type('Output', (), {'last_hidden_state': self.image_encoder(x)})()
-                        
-                        base_models["sam2"] = DummySAM2()
-                    
-                    # Q-Formerモデル追加
-                    if self.qformer_model is not None:
-                        base_models["qformer"] = self.qformer_model
-                    else:
-                        # ダミーQ-Former
-                        class DummyQFormer(nn.Module):
-                            def __init__(self):
-                                super().__init__()
-                                self.config = type('Config', (), {'hidden_size': 768})()
-                                self.query_tokens = nn.Parameter(torch.randn(32, 768))
-                            
-                            def forward(self, x):
-                                return type('Output', (), {'last_hidden_state': x})()
-                        
-                        base_models["qformer"] = DummyQFormer()
-                    
-                    # MoE Adapter作成
-                    from model.moe_adapters import create_heterogeneous_moe_adapter
-                    
-                    moe_config = {
-                        "num_experts": 3,  # Vision, Language, Fusion
-                        "active_experts": 2,  # Top-k
-                        "lora_rank": self.config.lora_rank,  # 論文準拠: 16
-                        "lora_alpha": self.config.lora_alpha,  # 論文準拠: 32
-                        "expert_capacity_factor": 1.25,
-                        "load_balancing": True
-                    }
-                    
-                    self.moe_adapter = create_heterogeneous_moe_adapter(
-                        base_models=base_models,
-                        moe_config=moe_config
-                    )
-                    
-                    # MoE統計情報表示
-                    moe_stats = self.moe_adapter.get_moe_statistics()
-                    logger.info(f"\nMoE統計情報:")
-                    logger.info(f"  - 総エキスパート数: {moe_stats['total_experts']}")
-                    logger.info(f"  - 総学習可能パラメータ: {moe_stats['total_trainable_params']:,}")
-                    logger.info(f"  - エキスパート重み: {moe_stats['expert_weights']}")
-                    
-                    logger.info("✅ MoE統合完了")
-                else:
-                    self.moe_adapter = None
+                self.moe_adapter = create_heterogeneous_moe_adapter(
+                    base_models=base_models,
+                    moe_config=moe_config
+                )
                 
-                return model
+                # MoE統計情報表示
+                moe_stats = self.moe_adapter.get_moe_statistics()
+                logger.info(f"\nMoE統計情報:")
+                logger.info(f"  - 総エキスパート数: {moe_stats['total_experts']}")
+                logger.info(f"  - 総学習可能パラメータ: {moe_stats['total_trainable_params']:,}")
+                logger.info(f"  - エキスパート重み: {moe_stats['expert_weights']}")
                 
-            except Exception as e:
-                logger.error(f"❌ Llama-4ロード失敗: {e}")
-                logger.warning("⚠️ ダミーモデルにフォールバック")
-                return self._create_fallback_model()
+                logger.info("✅ MoE統合完了")
+            else:
+                self.moe_adapter = None
+            
+            return model
                 
         except Exception as e:
-            logger.error(f"❌ モデル初期化エラー: {e}")
+            logger.error(f"❌ LISA-Llama4モデル初期化エラー: {e}")
+            logger.warning("⚠️ ダミーモデルにフォールバック")
             return self._create_fallback_model()
     
     def _create_fallback_model(self) -> nn.Module:
@@ -428,6 +428,218 @@ class Phase3CRealIntegrationTest:
                 return x
         
         return DummyMultiModalModel().to(self.device)
+    
+    def _create_dummy_sam2(self) -> nn.Module:
+        """ダミーSAM2モデル"""
+        class DummySAM2(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = type('Config', (), {'hidden_size': 256})()
+                self.image_encoder = nn.Linear(256, 256)
+            
+            def forward(self, x):
+                return type('Output', (), {'last_hidden_state': self.image_encoder(x)})()
+        
+        return DummySAM2().to(self.device)
+    
+    def _create_dummy_qformer(self) -> nn.Module:
+        """ダミーQ-Former"""
+        class DummyQFormer(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = type('Config', (), {'hidden_size': 768})()
+                self.query_tokens = nn.Parameter(torch.randn(32, 768))
+            
+            def forward(self, x):
+                return type('Output', (), {'last_hidden_state': x})()
+        
+        return DummyQFormer().to(self.device)
+    
+    def setup_optimizer_and_scheduler(self):
+        """オプティマイザーとスケジューラー設定（train_llama4_lisa_single_process.py準拠）"""
+        logger.info("=== オプティマイザー・スケジューラー設定 ===")
+        
+        # オプティマイザー設定
+        if BITSANDBYTES_AVAILABLE and hasattr(self.config, 'use_8bit_adam') and self.config.use_8bit_adam:
+            self.optimizer = bnb.optim.AdamW8bit(
+                self.llama4_model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+                betas=(0.9, 0.999),
+                eps=1e-8
+            )
+            logger.info("✓ 8bit AdamW optimizer設定")
+        else:
+            self.optimizer = optim.AdamW(
+                self.llama4_model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+                betas=(0.9, 0.999),
+                eps=1e-8
+            )
+            logger.info("✓ 標準AdamW optimizer設定")
+        
+        # スケジューラー設定
+        total_steps = self.config.epochs * (len(self.real_dataloader) if self.real_dataloader else 1000)
+        warmup_steps = int(self.config.warmup_ratio * total_steps)
+        
+        self.scheduler = get_cosine_schedule_with_warmup(
+            self.optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
+        
+        logger.info(f"✓ コサインスケジューラー設定: warmup={warmup_steps}, total={total_steps}")
+    
+    def setup_tensorboard(self):
+        """TensorBoard設定"""
+        log_dir = os.path.join(self.config.log_dir, f"tensorboard_{self.config.exp_name}")
+        self.writer = SummaryWriter(log_dir)
+        logger.info(f"✓ TensorBoard設定: {log_dir}")
+    
+    def train_epoch(self, epoch: int) -> Dict[str, float]:
+        """1エポックの学習実行（Phase 3C統合）"""
+        logger.info(f"\n📚 Phase 3C統合学習エポック {epoch+1}/{self.config.epochs}")
+        
+        self.llama4_model.train()
+        
+        # メトリクス初期化
+        total_losses = AverageMeter('Total', ':.4e')
+        lm_losses = AverageMeter('LM', ':.4e')
+        seg_losses = AverageMeter('Seg', ':.4e')
+        
+        progress = ProgressMeter(
+            len(self.real_dataloader) if self.config.steps_per_epoch is None else self.config.steps_per_epoch,
+            [total_losses],
+            prefix=f"Epoch: [{epoch}]"
+        )
+        
+        # メモリ最適化
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+        
+        # Phase 3C統合学習システム設定
+        integrated_training = create_curriculum_integrated_training(
+            model=self.llama4_model,
+            config_override={
+                'enable_metap': self.config.enable_metap,
+                'enable_curriculum': self.config.enable_curriculum,
+                'batch_size': self.config.batch_size,
+                'num_gpus': torch.cuda.device_count(),
+                'lora_rank': self.config.lora_rank,
+                'lora_alpha': self.config.lora_alpha
+            },
+            device=self.device
+        )
+        
+        # 検証データローダーとcollate_fn設定（Phase 3C完全版）
+        if hasattr(integrated_training, 'set_val_dataloader'):
+            # 小規模検証データセット作成
+            val_dataset = HybridDataset(
+                base_image_dir=self.config.base_image_dir,
+                llama_processor=self.llama4_processor,
+                samples_per_epoch=20,  # 検証用小規模
+                precision="bf16",
+                llama_image_size=self.config.llama_image_size,
+                sam_image_size=self.config.sam_image_size,
+                num_classes_per_sample=self.config.num_classes_per_sample,
+                exclude_val=True,  # 検証セット専用
+                dataset=self.config.dataset_type,
+                sample_rate=self.config.sample_rate,
+                sem_seg_data=self.config.sem_seg_data,
+                reason_seg_data=self.config.reason_seg_data,
+                refer_seg_data=self.config.refer_seg_data,
+                vqa_data=self.config.vqa_data,
+            )
+            
+            val_dataloader = DataLoader(
+                val_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=False,
+                num_workers=0,
+                pin_memory=True,
+                collate_fn=collate_fn,
+                drop_last=True
+            )
+            
+            integrated_training.set_val_dataloader(val_dataloader)
+            logger.info("✓ 検証データローダー設定完了")
+        
+        if hasattr(integrated_training, 'set_collate_fn'):
+            integrated_training.set_collate_fn(collate_fn)
+            logger.info("✓ HybridDataset collate_fn設定完了")
+        
+        # データセット困難度評価（カリキュラム学習用）
+        evaluated_samples = self.evaluate_dataset_difficulty(self.real_dataset)
+        val_samples = evaluated_samples[:min(len(evaluated_samples) // 10, 20)]  # 小規模検証セット
+        
+        # Phase 3C統合学習エポック実行
+        try:
+            result = integrated_training.curriculum_training_epoch(
+                epoch=epoch,
+                train_dataset=evaluated_samples,
+                val_dataset=val_samples,
+                optimizer=self.optimizer
+            )
+            
+            # MoE統計記録（有効な場合）
+            if self.moe_adapter is not None and self.writer:
+                moe_stats = self.moe_adapter.get_moe_statistics()
+                for expert_name, expert_info in moe_stats['expert_info'].items():
+                    self.writer.add_scalar(
+                        f'MoE/{expert_name}_trainable_params',
+                        expert_info['trainable_params'],
+                        epoch
+                    )
+                for expert_name, weight in moe_stats['expert_weights'].items():
+                    self.writer.add_scalar(
+                        f'MoE/{expert_name}_weight',
+                        weight,
+                        epoch
+                    )
+            
+            # 結果処理
+            avg_loss = result['avg_loss']
+            total_losses.update(avg_loss, len(evaluated_samples))
+            
+            # TensorBoard記録
+            if self.writer:
+                self.writer.add_scalar('Loss/Total', avg_loss, epoch)
+                self.writer.add_scalar('Learning_Rate', self.optimizer.param_groups[0]['lr'], epoch)
+                if 'stage_name' in result:
+                    self.writer.add_text('Curriculum/Stage', result['stage_name'], epoch)
+            
+            # スケジューラー更新
+            if self.scheduler:
+                self.scheduler.step()
+            
+            # メモリクリア
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+            
+            epoch_result = {
+                'total_loss': avg_loss,
+                'lm_loss': result.get('lm_loss', 0.0),
+                'seg_loss': result.get('seg_loss', 0.0),
+                'curriculum_stage': result.get('stage_name', 'unknown'),
+                'processed_samples': result.get('processed_samples', len(evaluated_samples)),
+                'learning_rate': self.optimizer.param_groups[0]['lr']
+            }
+            
+            logger.info(f"✅ エポック {epoch+1} 完了:")
+            logger.info(f"  - 平均損失: {avg_loss:.6f}")
+            logger.info(f"  - カリキュラムステージ: {result.get('stage_name', 'unknown')}")
+            logger.info(f"  - 学習率: {epoch_result['learning_rate']:.8f}")
+            
+            return epoch_result
+            
+        except Exception as e:
+            logger.error(f"❌ エポック {epoch+1} 実行エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def create_real_dataset(self) -> Tuple[HybridDataset, DataLoader]:
         """実際のHybridDataset作成（train_llama4_lisa_single_process.py準拠）"""
@@ -462,15 +674,15 @@ class Phase3CRealIntegrationTest:
         # DataLoader作成
         dataloader = DataLoader(
             dataset,
-            batch_size=self.config.test_batch_size,
+            batch_size=self.config.batch_size,
             shuffle=True,
-            num_workers=0,  # デバッグ用にシングルワーカー
+            num_workers=self.config.workers,
             pin_memory=True,
             collate_fn=collate_fn,
             drop_last=True
         )
         
-        logger.info(f"✓ DataLoader作成完了: バッチサイズ={self.config.test_batch_size}")
+        logger.info(f"✓ DataLoader作成完了: バッチサイズ={self.config.batch_size}")
         
         return dataset, dataloader
     
@@ -526,6 +738,182 @@ class Phase3CRealIntegrationTest:
         
         return evaluated_samples
     
+    def train_full_phase3c(self) -> Dict[str, Any]:
+        """Phase 3C完全学習実行"""
+        logger.info("\n" + "="*80)
+        logger.info("🚀 Phase 3C統合学習開始")
+        logger.info("="*80)
+        logger.info(f"実験名: {self.config.exp_name}")
+        logger.info(f"エポック数: {self.config.epochs}")
+        logger.info(f"バッチサイズ: {self.config.batch_size}")
+        logger.info(f"データセット: {self.config.dataset_type}")
+        logger.info(f"MetaP: {'有効' if self.config.enable_metap else '無効'}")
+        logger.info(f"カリキュラム学習: {'有効' if self.config.enable_curriculum else '無効'}")
+        logger.info(f"MoE統合: {'有効' if self.config.enable_moe else '無効'}")
+        
+        try:
+            # 1. モデル初期化
+            self.setup_models()
+            
+            # 2. データセット作成
+            if self.real_dataset is None or self.real_dataloader is None:
+                self.real_dataset, self.real_dataloader = self.create_real_dataset()
+            
+            # 3. オプティマイザー・スケジューラー設定
+            self.setup_optimizer_and_scheduler()
+            
+            # 4. TensorBoard設定
+            self.setup_tensorboard()
+            
+            # 5. 学習ループ
+            start_time = time.time()
+            
+            for epoch in range(self.config.epochs):
+                epoch_result = self.train_epoch(epoch)
+                self.training_stats['epoch_results'].append(epoch_result)
+                
+                # ベストモデル更新
+                if epoch_result['total_loss'] < self.training_stats['best_loss']:
+                    self.training_stats['best_loss'] = epoch_result['total_loss']
+                    self.training_stats['best_epoch'] = epoch
+                    self.save_checkpoint(epoch, is_best=True)
+                
+                # 定期保存
+                if (epoch + 1) % self.config.save_freq == 0:
+                    self.save_checkpoint(epoch, is_best=False)
+            
+            total_time = time.time() - start_time
+            
+            # 結果サマリー
+            results = {
+                'success': True,
+                'total_time': total_time,
+                'epochs_completed': self.config.epochs,
+                'best_loss': self.training_stats['best_loss'],
+                'best_epoch': self.training_stats['best_epoch'],
+                'final_loss': self.training_stats['epoch_results'][-1]['total_loss'],
+                'epoch_results': self.training_stats['epoch_results'],
+                'config': self.config.__dict__
+            }
+            
+            # 改善率計算
+            if len(self.training_stats['epoch_results']) > 0:
+                initial_loss = self.training_stats['epoch_results'][0]['total_loss']
+                final_loss = results['final_loss']
+                improvement = (initial_loss - final_loss) / initial_loss * 100
+                results['improvement_percentage'] = improvement
+            
+            logger.info("\n" + "="*80)
+            logger.info("🎉 Phase 3C統合学習完了")
+            logger.info("="*80)
+            logger.info(f"総学習時間: {total_time:.1f}秒")
+            logger.info(f"ベスト損失: {results['best_loss']:.6f} (エポック {results['best_epoch']+1})")
+            if 'improvement_percentage' in results:
+                logger.info(f"損失改善率: {results['improvement_percentage']:.2f}%")
+            
+            # 結果保存
+            self.save_training_results(results)
+            
+            # TensorBoard終了
+            if self.writer:
+                self.writer.close()
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"❌ Phase 3C統合学習エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'error': str(e)}
+    
+    def save_checkpoint(self, epoch: int, is_best: bool = False):
+        """チェックポイント保存"""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': self.llama4_model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'best_loss': self.training_stats['best_loss'],
+            'config': self.config.__dict__
+        }
+        
+        # 通常チェックポイント
+        checkpoint_path = os.path.join(self.config.output_dir, f'checkpoint_epoch_{epoch+1}.pth')
+        torch.save(checkpoint, checkpoint_path)
+        logger.info(f"💾 チェックポイント保存: {checkpoint_path}")
+        
+        # ベストモデル保存
+        if is_best:
+            best_path = os.path.join(self.config.output_dir, 'best_model.pth')
+            torch.save(checkpoint, best_path)
+            logger.info(f"🏆 ベストモデル保存: {best_path}")
+    
+    def save_training_results(self, results: Dict[str, Any]):
+        """学習結果保存"""
+        results_path = os.path.join(self.config.output_dir, f"{self.config.exp_name}_results.json")
+        
+        # JSON変換用処理
+        def convert_for_json(obj):
+            if isinstance(obj, torch.Tensor):
+                return obj.tolist()
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.bool_, np.integer, np.floating)):
+                return obj.item()
+            elif hasattr(obj, '__dict__'):
+                return convert_for_json(obj.__dict__)
+            elif isinstance(obj, dict):
+                return {k: convert_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_for_json(item) for item in obj]
+            else:
+                return str(obj) if not isinstance(obj, (bool, int, float, str, type(None))) else obj
+        
+        serializable_results = convert_for_json(results)
+        
+        with open(results_path, 'w', encoding='utf-8') as f:
+            json.dump(serializable_results, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"💾 学習結果保存: {results_path}")
+        
+        # 学習曲線プロット
+        self.plot_training_curves(results['epoch_results'])
+    
+    def plot_training_curves(self, epoch_results: List[Dict[str, Any]]):
+        """学習曲線プロット"""
+        if not epoch_results:
+            return
+        
+        epochs = list(range(1, len(epoch_results) + 1))
+        losses = [r['total_loss'] for r in epoch_results]
+        lrs = [r['learning_rate'] for r in epoch_results]
+        
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+        
+        # 損失曲線
+        ax1.plot(epochs, losses, 'b-', linewidth=2, marker='o', label='総損失')
+        ax1.set_title(f'Phase 3C学習曲線 - {self.config.exp_name}', fontsize=14)
+        ax1.set_xlabel('エポック')
+        ax1.set_ylabel('損失')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 学習率曲線
+        ax2.plot(epochs, lrs, 'r-', linewidth=2, marker='s', label='学習率')
+        ax2.set_title('学習率スケジュール', fontsize=12)
+        ax2.set_xlabel('エポック')
+        ax2.set_ylabel('学習率')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        plot_path = os.path.join(self.config.output_dir, f'{self.config.exp_name}_curves.png')
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        logger.info(f"📊 学習曲線保存: {plot_path}")
+    
     def test_metap_standalone(self) -> Dict[str, Any]:
         """MetaP単体テスト（実データ使用）"""
         logger.info("\n" + "="*80)
@@ -545,23 +933,22 @@ class Phase3CRealIntegrationTest:
             
             # 実データセット（小規模）
             if self.real_dataset is None:
-                temp_config = Phase3CRealTestConfig()
-                temp_config.samples_per_epoch = 10  # MetaPテスト用小規模
+                # MetaPテスト用小規模データセット
                 temp_dataset = HybridDataset(
-                    base_image_dir=temp_config.base_image_dir,
+                    base_image_dir=self.config.base_image_dir,
                     llama_processor=self.llama4_processor,
-                    samples_per_epoch=temp_config.samples_per_epoch,
-                    dataset=temp_config.dataset_type,
-                    sample_rate=temp_config.sample_rate,
+                    samples_per_epoch=10,  # MetaPテスト用小規模
+                    dataset=self.config.dataset_type,
+                    sample_rate=self.config.sample_rate,
                     precision="bf16",
-                    llama_image_size=temp_config.llama_image_size,
-                    sam_image_size=temp_config.sam_image_size,
-                    num_classes_per_sample=temp_config.num_classes_per_sample,
-                    exclude_val=temp_config.exclude_val,
-                    sem_seg_data=temp_config.sem_seg_data,
-                    reason_seg_data=temp_config.reason_seg_data,
-                    refer_seg_data=temp_config.refer_seg_data,
-                    vqa_data=temp_config.vqa_data,
+                    llama_image_size=self.config.llama_image_size,
+                    sam_image_size=self.config.sam_image_size,
+                    num_classes_per_sample=self.config.num_classes_per_sample,
+                    exclude_val=self.config.exclude_val,
+                    sem_seg_data=self.config.sem_seg_data,
+                    reason_seg_data=self.config.reason_seg_data,
+                    refer_seg_data=self.config.refer_seg_data,
+                    vqa_data=self.config.vqa_data,
                 )
             else:
                 temp_dataset = self.real_dataset
@@ -720,23 +1107,21 @@ class Phase3CRealIntegrationTest:
                 self.real_dataset, self.real_dataloader = self.create_real_dataset()
             
             # 検証用データセット（小規模）
-            val_config = Phase3CRealTestConfig()
-            val_config.samples_per_epoch = 10
             val_dataset = HybridDataset(
-                base_image_dir=val_config.base_image_dir,
+                base_image_dir=self.config.base_image_dir,
                 llama_processor=self.llama4_processor,
-                samples_per_epoch=val_config.samples_per_epoch,
-                dataset=val_config.dataset_type,
-                sample_rate=val_config.sample_rate,
+                samples_per_epoch=10,  # 検証用小規模
+                dataset=self.config.dataset_type,
+                sample_rate=self.config.sample_rate,
                 precision="bf16",
-                llama_image_size=val_config.llama_image_size,
-                sam_image_size=val_config.sam_image_size,
-                num_classes_per_sample=val_config.num_classes_per_sample,
+                llama_image_size=self.config.llama_image_size,
+                sam_image_size=self.config.sam_image_size,
+                num_classes_per_sample=self.config.num_classes_per_sample,
                 exclude_val=True,  # 検証セット用
-                sem_seg_data=val_config.sem_seg_data,
-                reason_seg_data=val_config.reason_seg_data,
-                refer_seg_data=val_config.refer_seg_data,
-                vqa_data=val_config.vqa_data,
+                sem_seg_data=self.config.sem_seg_data,
+                reason_seg_data=self.config.reason_seg_data,
+                refer_seg_data=self.config.refer_seg_data,
+                vqa_data=self.config.vqa_data,
             )
             
             # オプティマイザ
@@ -747,7 +1132,7 @@ class Phase3CRealIntegrationTest:
             start_time = time.time()
             
             for epoch in range(min(self.config.num_test_epochs, 2)):  # 実データなので2エポックまで
-                logger.info(f"\n📚 統合テストエポック {epoch+1}/{min(self.config.num_test_epochs, 2)}")
+                logger.info(f"\n📚 統合テストエポック {epoch+1}/{min(2, 2)}")
                 
                 # メモリ最適化
                 if torch.cuda.is_available():
@@ -966,116 +1351,10 @@ class Phase3CRealIntegrationTest:
             traceback.print_exc()
             return {'success': False, 'error': str(e)}
     
-    def test_moe_integration(self) -> Dict[str, Any]:
-        """MoE統合テスト"""
-        logger.info("\n" + "="*80)
-        logger.info("🧪 Test: MoE Integration") 
-        logger.info("="*80)
-        
-        results = {}
-        
-        try:
-            if not self.config.test_moe_integration or not hasattr(self, 'moe_adapter') or self.moe_adapter is None:
-                logger.info("⏭️  MoE統合テストスキップ（無効化中）")
-                results['skipped'] = True
-                return results
-            
-            # テストデータ作成
-            batch_size = 2
-            seq_len = 16
-            hidden_size = 5120  # Llama-4隠れ層サイズ
-            
-            test_input = torch.randn(
-                batch_size, seq_len, hidden_size, 
-                device=self.device, dtype=torch.bfloat16
-            )
-            
-            logger.info(f"\nテスト入力形状: {test_input.shape}")
-            
-            # 1. 動的ルーティングテスト
-            logger.info("\n1. 動的ルーティングテスト...")
-            with torch.no_grad():
-                routed_output, moe_info = self.moe_adapter(test_input)
-            
-            logger.info(f"  - ルーティング出力形状: {routed_output.shape}")
-            logger.info(f"  - ルーティングタイプ: {moe_info['routing_type']}")
-            
-            if 'routing_info' in moe_info:
-                routing_info = moe_info['routing_info']
-                logger.info(f"  - エキスパート使用率: {routing_info['expert_usage']}")
-                logger.info(f"  - 負荷分散損失: {routing_info['load_balancing_loss']:.4f}")
-            
-            results['dynamic_routing'] = {
-                'output_shape': list(routed_output.shape),
-                'routing_type': moe_info['routing_type'],
-                'expert_usage': moe_info.get('routing_info', {}).get('expert_usage', [])
-            }
-            
-            # 2. 特定エキスパート強制使用テスト
-            logger.info("\n2. 特定エキスパート強制使用テスト...")
-            for expert_name in ['llama', 'sam2', 'qformer']:
-                with torch.no_grad():
-                    expert_output, expert_info = self.moe_adapter(
-                        test_input, 
-                        expert_type=expert_name
-                    )
-                
-                logger.info(f"  - {expert_name}エキスパート出力形状: {expert_output.shape}")
-                logger.info(f"    重み: {expert_info['expert_weight']:.3f}")
-                
-                results[f'{expert_name}_expert'] = {
-                    'output_shape': list(expert_output.shape),
-                    'weight': expert_info['expert_weight']
-                }
-            
-            # 3. 実データでのMoE推論テスト
-            logger.info("\n3. 実データでのMoE推論テスト...")
-            if self.real_dataloader is None:
-                self.real_dataset, self.real_dataloader = self.create_real_dataset()
-            
-            # 1バッチ取得
-            sample_batch = next(iter(self.real_dataloader))
-            
-            # テキスト埋め込み取得（簡易版）
-            if hasattr(self.llama4_model, 'model') and hasattr(self.llama4_model.model, 'embed_tokens'):
-                text_embeds = self.llama4_model.model.embed_tokens(
-                    sample_batch['input_ids'].to(self.device)
-                )
-            else:
-                text_embeds = torch.randn(
-                    batch_size, seq_len, hidden_size,
-                    device=self.device, dtype=torch.bfloat16
-                )
-            
-            # MoE処理
-            with torch.no_grad():
-                moe_output, real_moe_info = self.moe_adapter(text_embeds)
-            
-            logger.info(f"  - 実データMoE出力形状: {moe_output.shape}")
-            logger.info(f"  - エキスパート重み配分: {real_moe_info.get('expert_weights', {})}")
-            
-            results['real_data_moe'] = {
-                'output_shape': list(moe_output.shape),
-                'expert_weights': real_moe_info.get('expert_weights', {})
-            }
-            
-            # 成功判定
-            results['success'] = True
-            logger.info("\n✅ MoE統合テスト成功")
-            
-        except Exception as e:
-            logger.error(f"\n❌ MoE統合テストエラー: {e}")
-            import traceback
-            traceback.print_exc()
-            results['error'] = str(e)
-            results['success'] = False
-        
-        return results
-    
     def run_all_tests(self) -> Dict[str, Any]:
-        """全テスト実行（MoE統合版）"""
+        """全テスト実行"""
         logger.info("\n" + "="*80)
-        logger.info("🚀 Phase 3C統合テスト開始（実データ版 + MoE統合）")
+        logger.info("🚀 Phase 3C統合テスト開始（実データ版）")
         logger.info(f"目標: 学習効率{self.config.target_speedup}倍, 精度{self.config.target_improvement}%向上")
         logger.info(f"データセット: {self.config.dataset_type}")
         logger.info(f"サンプル数: {self.config.samples_per_epoch}")
@@ -1101,9 +1380,6 @@ class Phase3CRealIntegrationTest:
         
         if self.config.test_curriculum_standalone:
             self.results['curriculum_results'] = self.test_curriculum_standalone()
-        
-        if self.config.test_moe_integration:
-            self.results['moe_integration'] = self.test_moe_integration()  # MoE統合テスト追加
         
         if self.config.test_phase3b_compatibility:
             self.results['phase3b_compatibility'] = self.test_phase3b_compatibility()
@@ -1203,7 +1479,6 @@ class Phase3CRealIntegrationTest:
         test_status = {
             'MetaP単体': self.results.get('metap_results', {}).get('success', False),
             'カリキュラム単体': self.results.get('curriculum_results', {}).get('success', False),
-            'MoE統合': self.results.get('moe_integration', {}).get('success', False),  # MoE統合追加
             'Phase 3B互換性': self.results.get('phase3b_compatibility', {}).get('success', False),
             '完全統合': self.results.get('integration_results', {}).get('success', False)
         }
@@ -1241,18 +1516,65 @@ class Phase3CRealIntegrationTest:
 
 
 def main():
-    """メイン実行関数"""
-    # テスト設定
-    config = Phase3CRealTestConfig()
+    """メイン学習関数"""
+    # 引数解析
+    parser = argparse.ArgumentParser(description="Phase 3C統合学習スクリプト")
     
-    # テスト実行
-    tester = Phase3CRealIntegrationTest(config)
-    results = tester.run_all_tests()
+    # 基本設定
+    parser.add_argument("--exp_name", type=str, required=True, help="実験名")
+    parser.add_argument("--epochs", type=int, default=10, help="エポック数")
+    parser.add_argument("--batch_size", type=int, default=1, help="バッチサイズ")
+    parser.add_argument("--learning_rate", type=float, default=1e-4, help="学習率")
+    parser.add_argument("--weight_decay", type=float, default=0.05, help="重み減衰")
     
-    return results
-
-
-if __name__ == "__main__":
+    # データセット設定
+    parser.add_argument("--dataset", type=str, default="reason_seg", 
+                       help="データセット種類: reason_seg,refer_seg,vqa,sem_seg")
+    parser.add_argument("--samples_per_epoch", type=int, default=1000, help="エポック毎サンプル数")
+    parser.add_argument("--workers", type=int, default=0, help="DataLoaderワーカー数")
+    
+    # Phase 3C設定
+    parser.add_argument("--enable_metap", action="store_true", default=True, help="MetaP最適化有効化")
+    parser.add_argument("--enable_curriculum", action="store_true", default=True, help="カリキュラム学習有効化")
+    parser.add_argument("--enable_moe", action="store_true", default=True, help="MoE統合有効化")
+    parser.add_argument("--lora_rank", type=int, default=16, help="LoRA rank")
+    parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha")
+    
+    # 出力設定
+    parser.add_argument("--output_dir", type=str, default="./phase3c_training_results", help="出力ディレクトリ")
+    parser.add_argument("--log_dir", type=str, default="./phase3c_logs", help="ログディレクトリ")
+    
+    # 学習制御
+    parser.add_argument("--save_freq", type=int, default=1, help="保存頻度（エポック）")
+    parser.add_argument("--steps_per_epoch", type=int, default=None, help="エポック毎ステップ数制限")
+    parser.add_argument("--use_8bit_adam", action="store_true", default=True, help="8bit AdamW使用")
+    
+    args = parser.parse_args()
+    
+    # 設定作成
+    config = Phase3CTrainingConfig(
+        exp_name=args.exp_name,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        dataset_type=args.dataset,
+        samples_per_epoch=args.samples_per_epoch,
+        workers=args.workers,
+        enable_metap=args.enable_metap,
+        enable_curriculum=args.enable_curriculum,
+        enable_moe=args.enable_moe,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        output_dir=args.output_dir,
+        log_dir=args.log_dir,
+        save_freq=args.save_freq,
+        steps_per_epoch=args.steps_per_epoch
+    )
+    
+    # 設定に追加フィールド
+    config.use_8bit_adam = args.use_8bit_adam
+    
     # GPU確認
     if torch.cuda.is_available():
         print(f"🔥 CUDA利用可能: {torch.cuda.device_count()} GPU(s)")
@@ -1262,5 +1584,20 @@ if __name__ == "__main__":
     else:
         print("⚠️ CUDA利用不可: CPUで実行")
     
+    # 学習実行
+    trainer = Phase3CTrainer(config)
+    results = trainer.train_full_phase3c()
+    
+    return results
+
+
+if __name__ == "__main__":
     # メイン実行
     results = main()
+    print(f"\n{'='*80}")
+    if results.get('success'):
+        print("🎉 Phase 3C統合学習成功完了")
+    else:
+        print("❌ Phase 3C統合学習失敗")
+        print(f"エラー: {results.get('error', 'Unknown error')}")
+    print(f"{'='*80}")

@@ -138,6 +138,13 @@ class CurriculumIntegratedTraining:
             }
         )
         
+        # 困難度スケジューラーにモデルとOHEM損失を設定
+        self.difficulty_scheduler.set_model_and_loss(model, self.ohem_loss)
+        
+        # 検証データローダー管理
+        self.val_dataloader = None
+        self.val_iterator = None
+        
         # MetaP統合（オプション）
         self.metap_integrated_model = None
         if self.config.enable_metap:
@@ -376,13 +383,43 @@ class CurriculumIntegratedTraining:
         samples: List[Dict[str, Any]], 
         stage_config: CurriculumStage
     ) -> Dict[str, torch.Tensor]:
-        """バッチデータ準備"""
+        """バッチデータ準備（実データ処理対応）"""
         # 空のサンプルチェック
         if not samples:
             logger.warning("空のサンプルリストが渡されました。ダミーバッチを作成します。")
             samples = [{'dummy': True}]  # 最低1つのサンプルを確保
         
-        # 簡易実装（実際の実装では適切なデータローダーを使用）
+        # HybridDatasetのcollate_fn統合（実データ処理）
+        try:
+            # HybridDatasetのcollate_fnがある場合は使用
+            if hasattr(self, 'collate_fn') and self.collate_fn is not None:
+                # 実データ用のcollate_fn呼び出し
+                batch_tensors = self.collate_fn(samples)
+                
+                # 解像度調整（カリキュラム段階に応じて）
+                if 'images' in batch_tensors:
+                    target_h, target_w = stage_config.resolution
+                    batch_tensors['images'] = F.interpolate(
+                        batch_tensors['images'],
+                        size=(target_h, target_w),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                
+                # SAMターゲットも同様に解像度調整
+                if 'sam_targets' in batch_tensors:
+                    batch_tensors['sam_targets'] = F.interpolate(
+                        batch_tensors['sam_targets'].float(),
+                        size=(target_h, target_w),
+                        mode='nearest'
+                    ).long()
+                
+                return batch_tensors
+                
+        except Exception as e:
+            logger.debug(f"HybridDataset collate_fn使用エラー: {e}. フォールバック処理を使用します。")
+        
+        # フォールバック: 簡易実装（テスト用）
         batch = {
             'images': [],
             'texts': [],
@@ -527,6 +564,10 @@ class CurriculumIntegratedTraining:
         val_batch: Optional[Dict[str, torch.Tensor]] = None
     ) -> Dict[str, float]:
         """MetaP + カリキュラム統合学習ステップ"""
+        # 検証バッチが提供されていない場合は自動取得
+        if val_batch is None:
+            val_batch = self._get_val_batch()
+        
         # MetaPモデルの訓練ステップ
         results = self.metap_integrated_model.meta_training_step(
             train_batch=batch,
@@ -614,6 +655,44 @@ class CurriculumIntegratedTraining:
         
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"💾 チェックポイント保存: {checkpoint_path}")
+    
+    def set_val_dataloader(self, val_dataloader):
+        """検証データローダーを設定"""
+        self.val_dataloader = val_dataloader
+        self.val_iterator = iter(val_dataloader) if val_dataloader else None
+        logger.info("検証データローダー設定完了")
+    
+    def _get_val_batch(self) -> Optional[Dict[str, torch.Tensor]]:
+        """検証バッチを取得（循環的に）"""
+        if self.val_dataloader is None:
+            logger.warning("検証データローダーが設定されていません")
+            return None
+            
+        try:
+            # 次のバッチを取得
+            val_batch = next(self.val_iterator)
+        except (StopIteration, AttributeError):
+            # イテレータをリセット
+            self.val_iterator = iter(self.val_dataloader)
+            val_batch = next(self.val_iterator)
+            
+        # 現在のステージ設定を取得
+        stage_name, stage_config = self.curriculum.get_stage_config(self.current_epoch)
+        
+        # バッチをデバイスに転送
+        if isinstance(val_batch, dict):
+            for key, value in val_batch.items():
+                if isinstance(value, torch.Tensor):
+                    val_batch[key] = value.to(self.device)
+                elif isinstance(value, list) and all(isinstance(v, torch.Tensor) for v in value):
+                    val_batch[key] = [v.to(self.device) for v in value]
+        
+        return val_batch
+    
+    def set_collate_fn(self, collate_fn):
+        """HybridDatasetのcollate_fnを設定"""
+        self.collate_fn = collate_fn
+        logger.info("HybridDataset collate_fn設定完了")
     
     def get_training_summary(self) -> Dict[str, Any]:
         """学習サマリー取得"""
