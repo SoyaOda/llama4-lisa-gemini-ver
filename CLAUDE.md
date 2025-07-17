@@ -21,7 +21,7 @@ md_files/phase3_moe_optimization_strategy.mdに沿って実装してある。今
 1. エラーの原因と本質的な修正方針をざっくり推定
 2. O3によるリサーチ（本プロジェクトではWebリサーチはO3 MCPを介して行う）が必要そうか考える
 3. デバッグコードを用いたデバッグが必要そうか考える
-4. すでに走ったtest script（test_phase3b_integration_real.py）の内容が参考になりそうか考える
+4. すでに走ったtest script（test_phase3b_integration_real.py, test_phase3c_integration.py, train_llama4_lisa_single_process.py）の内容が参考になりそうか考える
 5. 1-4を踏まえて、再度本質的な修正方針を考え、一度提案する
 6. 提案に対して私が許可もしくはどの提案を採用するか判断するので、その判断に基づいて修正する
 ※開発や修正において、フォールバック的な機能はエラーを隠蔽するので、エラーを出して止めて次のデバッグに繋げるように開発すること
