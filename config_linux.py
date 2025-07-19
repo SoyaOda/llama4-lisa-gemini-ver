@@ -109,9 +109,28 @@ LORA_TARGET_MODULES = [
 ]
 
 # 🔄 SAM2+MLE論文準拠: モーダル特化target_modules（Web調査ベース修正）
+# 2025年1月デバッグ結果: facebook/sam2-hiera-largeの実際のモジュールパス
+# 注: PEFTはワイルドカードをサポートしないため、代表的なモジュールを明示的に指定
 SAM2_TARGET_MODULES = [
-    "qkv",                                   # SAM2 combined QKV projection（Web調査結果）
-    "proj"                                   # SAM2 output projection（Web調査結果）
+    # Attention QKV layers (first 4 blocks as representatives)
+    "image_encoder.trunk.blocks.0.attn.qkv",
+    "image_encoder.trunk.blocks.1.attn.qkv",
+    "image_encoder.trunk.blocks.2.attn.qkv",
+    "image_encoder.trunk.blocks.3.attn.qkv",
+    # Attention projection layers
+    "image_encoder.trunk.blocks.0.attn.proj",
+    "image_encoder.trunk.blocks.1.attn.proj",
+    "image_encoder.trunk.blocks.2.attn.proj",
+    "image_encoder.trunk.blocks.3.attn.proj",
+    # Later blocks for deeper feature extraction
+    "image_encoder.trunk.blocks.44.attn.qkv",
+    "image_encoder.trunk.blocks.45.attn.qkv",
+    "image_encoder.trunk.blocks.46.attn.qkv",
+    "image_encoder.trunk.blocks.47.attn.qkv",
+    "image_encoder.trunk.blocks.44.attn.proj",
+    "image_encoder.trunk.blocks.45.attn.proj",
+    "image_encoder.trunk.blocks.46.attn.proj",
+    "image_encoder.trunk.blocks.47.attn.proj"
 ]
 
 QFORMER_TARGET_MODULES = [

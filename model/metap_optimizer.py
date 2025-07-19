@@ -319,10 +319,10 @@ class DynamicConfigAdapter:
         try:
             # LoRA設定の動的適用
             if hasattr(model, 'peft_config'):
-                # 既存のLoRA設定を更新
-                model.peft_config.r = config['lora_rank']
-                model.peft_config.lora_alpha = config['lora_alpha']
-                logger.info(f"LoRA設定更新: r={config['lora_rank']}, α={config['lora_alpha']}")
+                # PEFTConfigは不変オブジェクトのため、直接更新はスキップ
+                # 代わりに、実際のLoRAモジュールのパラメータを調整する必要がある
+                logger.info(f"LoRA設定変更要求: r={config['lora_rank']}, α={config['lora_alpha']}")
+                logger.info("注: PEFTConfigは不変のため、実行時の動的変更はサポートされていません")
             
             # 学習率の動的適用
             if hasattr(model, 'optimizer') and model.optimizer is not None:

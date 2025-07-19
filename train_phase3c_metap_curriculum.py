@@ -405,55 +405,9 @@ class Phase3CTrainer:
                 
         except Exception as e:
             logger.error(f"❌ LISA-Llama4モデル初期化エラー: {e}")
-            logger.warning("⚠️ ダミーモデルにフォールバック")
-            return self._create_fallback_model()
+            raise RuntimeError(f"LISA-Llama4モデルの初期化に失敗しました: {e}")
     
-    def _create_fallback_model(self) -> nn.Module:
-        """フォールバック用ダミーモデル"""
-        class DummyMultiModalModel(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.llama_embedding = nn.Embedding(50000, 5120)
-                self.sam_encoder = nn.Conv2d(3, 256, 3, padding=1)
-                self.qformer = nn.Linear(768, 768)
-                self.output_proj = nn.Linear(5120, 50000)
-                
-                # LoRA互換設定
-                self.peft_config = type('PEFTConfig', (), {
-                    'r': 16,
-                    'lora_alpha': 32
-                })()
             
-            def forward(self, x):
-                return x
-        
-        return DummyMultiModalModel().to(self.device)
-    
-    def _create_dummy_sam2(self) -> nn.Module:
-        """ダミーSAM2モデル"""
-        class DummySAM2(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.config = type('Config', (), {'hidden_size': 256})()
-                self.image_encoder = nn.Linear(256, 256)
-            
-            def forward(self, x):
-                return type('Output', (), {'last_hidden_state': self.image_encoder(x)})()
-        
-        return DummySAM2().to(self.device)
-    
-    def _create_dummy_qformer(self) -> nn.Module:
-        """ダミーQ-Former"""
-        class DummyQFormer(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.config = type('Config', (), {'hidden_size': 768})()
-                self.query_tokens = nn.Parameter(torch.randn(32, 768))
-            
-            def forward(self, x):
-                return type('Output', (), {'last_hidden_state': x})()
-        
-        return DummyQFormer().to(self.device)
     
     def setup_optimizer_and_scheduler(self):
         """オプティマイザーとスケジューラー設定（train_llama4_lisa_single_process.py準拠）"""

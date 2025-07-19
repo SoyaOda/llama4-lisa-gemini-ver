@@ -12,14 +12,14 @@ md_files/phase3_moe_optimization_strategy.mdに沿って実装してある。今
 ## Development Rules & Guidelines
 
 ### ⭐️開発方針作成ルール：以下のフローに沿って実装すること
-1. 与えられたお題に対して、徹底的にO3によるリサーチ（本プロジェクトではWebリサーチはO3 MCPを介して行う）を行う
+1. 与えられたお題に対して、Webリサーチはを行う
 2. 1を元にcurrent_dev_spec_md_fileに実装の仕様書をmdファイルとして保存する。
 3. todoリストも同様に作成する
 4. 2, 3のmdファイルとtodoリストを元に開発を進める
 
 ### ⭐️デバッグ修正ルール：以下のフローに沿って実装すること
 1. エラーの原因と本質的な修正方針をざっくり推定
-2. O3によるリサーチ（本プロジェクトではWebリサーチはO3 MCPを介して行う）が必要そうか考える
+2. Webリサーチはが必要そうか考える
 3. デバッグコードを用いたデバッグが必要そうか考える
 4. すでに走ったtest script（test_phase3b_integration_real.py, test_phase3c_integration.py, train_llama4_lisa_single_process.py）の内容が参考になりそうか考える
 5. 1-4を踏まえて、再度本質的な修正方針を考え、一度提案する

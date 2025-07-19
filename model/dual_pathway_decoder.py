@@ -429,8 +429,14 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
         if self.debug_mode:
             print(f"🔄 デュアルパスウェイ推論開始...")
             print(f"  - 画像: {images.shape}")
-            print(f"  - SAMプロンプト: {sam_prompts.shape}")
-            print(f"  - Llama隠れ状態: {llama_hidden_states.shape}")
+            if sam_prompts is not None:
+                print(f"  - SAMプロンプト: {sam_prompts.shape}")
+            else:
+                print(f"  - SAMプロンプト: None")
+            if llama_hidden_states is not None:
+                print(f"  - Llama隠れ状態: {llama_hidden_states.shape}")
+            else:
+                print(f"  - Llama隠れ状態: None")
         
         results = {}
         

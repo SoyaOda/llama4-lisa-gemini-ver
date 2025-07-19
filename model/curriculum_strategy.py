@@ -218,12 +218,12 @@ class LlamaMultiModalCurriculum:
             
             # 2. LoRA rank動的変更
             if hasattr(model, 'peft_config'):
-                model.peft_config.r = stage_config.lora_rank
-                # LoRA alpha自動調整（rank * 2の法則）
-                model.peft_config.lora_alpha = stage_config.lora_rank * 2
+                # PEFTConfigは不変のため、直接変更はできない
+                # 現在の設定を記録するのみ
                 adaptation_results['lora_rank'] = stage_config.lora_rank
                 adaptation_results['lora_alpha'] = stage_config.lora_rank * 2
-                logger.info(f"LoRA設定: r={stage_config.lora_rank}, α={stage_config.lora_rank * 2}")
+                logger.info(f"LoRA設定要求: r={stage_config.lora_rank}, α={stage_config.lora_rank * 2}")
+                logger.info("注: PEFTConfigは不変のため、実行時の動的変更はサポートされていません")
             
             # 3. モダリティ重み調整（Phase 3B融合重み活用）
             if hasattr(model, 'fusion_weights'):

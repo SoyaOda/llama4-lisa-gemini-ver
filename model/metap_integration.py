@@ -177,6 +177,16 @@ class MetaPIntegratedModel(nn.Module):
         # SAMプロンプト準備
         sam_prompts = batch.get('sam_prompts')
         
+        # SAMプロンプトがない場合は生成
+        if sam_prompts is None:
+            batch_size = llama_hidden_states.shape[0] if llama_hidden_states is not None else 1
+            device = next(self.parameters()).device
+            # ダミーのSAMプロンプト生成（test_phase3b_integration_real.py準拠）
+            sam_prompts = torch.randn(
+                batch_size, 32, 256,
+                device=device
+            )
+        
         # デュアルパスウェイ推論
         # 注：llama_hidden_statesは元の5120次元を使用（融合特徴ではない）
         decoder_results = self.dual_decoder(

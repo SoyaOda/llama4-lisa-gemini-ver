@@ -287,11 +287,17 @@ class DualModalityOHEMLoss(nn.Module):
         losses = {}
         
         print(f"  🔄 デュアルモダリティOHEM損失計算...")
-        print(f"    - Llama logits: {llama_logits.shape}")
+        if llama_logits is not None:
+            print(f"    - Llama logits: {llama_logits.shape}")
+        else:
+            print(f"    - Llama logits: None")
         print(f"    - SAM予測: {sam_predictions.shape}")
         print(f"    - SAMターゲット: {sam_targets.shape}")
         
         # 1. Llama-4言語理解損失
+        if llama_logits is None:
+            raise ValueError("llama_logitsがNoneです。モデルの出力を確認してください。")
+            
         llama_loss = self._compute_llama_loss(
             llama_logits, llama_targets, llama_attention_mask, apply_ohem
         )
