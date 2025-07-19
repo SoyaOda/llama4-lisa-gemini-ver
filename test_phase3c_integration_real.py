@@ -557,9 +557,9 @@ class Phase3CRealIntegrationTest:
                 # 実際のモデル推論
                 with torch.enable_grad():  # MetaPには勾配が必要
                     # 簡易的な推論（完全な統合推論は重いため）
-                    if hasattr(self.model, 'model') and hasattr(self.model.model, 'embed_tokens'):
+                    if hasattr(self.llama4_model, 'model') and hasattr(self.llama4_model.model, 'embed_tokens'):
                         # テキスト埋め込み取得
-                        text_embeds = self.model.model.embed_tokens(batch['input_ids'])
+                        text_embeds = self.llama4_model.model.embed_tokens(batch['input_ids'])
                         
                         # ダミー出力（実際のセグメンテーションは重いため、埋め込みベースで損失計算）
                         batch_size = text_embeds.shape[0]
