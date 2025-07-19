@@ -93,6 +93,15 @@ class LlamaQFormerSAM2Config:
         # セグメンテーション特別トークン
         self.seg_token = config_linux.SEG_TOKEN  # "[SEG]"
         
+        # 🔥 MoEアダプター互換性のためのllama_config辞書
+        self.llama_config = {
+            'hidden_size': self.llama_hidden_size,  # 5120
+            'model_id': self.llama_model_id,
+            'device_map': self.device_map,
+            'torch_dtype': self.torch_dtype,
+            'attn_implementation': self.attn_implementation
+        }
+        
         # 🆕 Phase 3A: MoE最適化設定 (SAM2+MLE論文準拠)
         mle_base_config = config_linux.get_mle_config()
         self.moe_config = {
@@ -341,6 +350,22 @@ class QFormerSegmentationBridge(nn.Module):
                 nn.Tanh(),  # 🔄 範囲制限: プロンプト安定化
             )
             
+            # 🔥 dtype統一のためBFloat16に変換（dtype不一致エラー対策）
+            if self.config.torch_dtype == torch.bfloat16:
+                print(f"  🔍 デバッグ: BFloat16変換前のdtype確認")
+                # 変換前の状態を確認
+                for i, layer in enumerate(self.enhanced_sam_projector):
+                    if hasattr(layer, 'weight'):
+                        print(f"    - enhanced_sam_projector Layer {i} weight dtype (変換前): {layer.weight.dtype}")
+                
+                self.enhanced_sam_projector = self.enhanced_sam_projector.to(dtype=torch.bfloat16)
+                self.curriculum_projector = self.curriculum_projector.to(dtype=torch.bfloat16)
+                
+                print(f"  🔍 デバッグ: BFloat16変換後のdtype確認")
+                # 変換後の状態を確認
+                for i, layer in enumerate(self.enhanced_sam_projector):
+                    if hasattr(layer, 'weight'):
+                        print(f"    - enhanced_sam_projector Layer {i} weight dtype (変換後): {layer.weight.dtype}")
             
             # 注記: デバイス・データ型移動は初期化完了後に一括実行
             
@@ -662,14 +687,61 @@ class QFormerSegmentationBridge(nn.Module):
             print(f"  🔄 Phase 3A: MoE最適化適用中...")
             
             try:
-                # Q-Former出力をMoE処理
+                # 🔥 Option A: Q-Former出力(768次元)をMoE入力(5120次元)に投影
+                print(f"    📊 次元変換: Q-Former({qformer_hidden_states.shape[-1]}次元) → MoE({self.config.llama_config['hidden_size']}次元)")
+                
+                # Q-Former用投影層を追加（初回のみ作成）
+                if not hasattr(self, 'qformer_to_moe_projector'):
+                    print(f"    🔧 Q-Former→MoE投影層を作成中...")
+                    self.qformer_to_moe_projector = nn.Linear(
+                        768,  # Q-Former出力次元（BLIP-2準拠）
+                        self.config.llama_config['hidden_size'],  # MoE入力次元（5120）
+                        bias=True
+                    ).to(device=qformer_hidden_states.device, dtype=qformer_hidden_states.dtype)
+                    print(f"    ✅ 投影層作成完了: 768 → {self.config.llama_config['hidden_size']}")
+                
+                # Q-Former出力を5120次元に投影
+                projected_states = self.qformer_to_moe_projector(qformer_hidden_states)
+                print(f"    ✅ 次元投影完了: {qformer_hidden_states.shape} → {projected_states.shape}")
+                
+                # デバイス整合性チェック
+                qformer_device = projected_states.device
+                qformer_dtype = projected_states.dtype
+                
+                # MoEアダプターのデバイス確認
+                moe_device = next(self.moe_adapter.parameters()).device
+                moe_dtype = next(self.moe_adapter.parameters()).dtype
+                
+                if moe_device != qformer_device or moe_dtype != qformer_dtype:
+                    print(f"    ⚠️ MoEアダプターデバイス不整合: MoE={moe_device}/{moe_dtype}, QFormer={qformer_device}/{qformer_dtype}")
+                    print(f"    🔄 MoEアダプターを{qformer_device}/{qformer_dtype}に移動中...")
+                    self.moe_adapter = self.moe_adapter.to(device=qformer_device, dtype=qformer_dtype)
+                    print(f"    ✅ MoEアダプター移動完了")
+                
+                # 投影されたQ-Former出力をMoE処理
                 moe_output, moe_stats = self.moe_adapter(
-                    hidden_states=qformer_hidden_states,
+                    hidden_states=projected_states,  # 5120次元に投影済み
                     expert_type=None  # 自動ルーティング
                 )
                 
-                # MoE処理結果を使用
-                qformer_hidden_states = moe_output
+                # MoE処理結果を元の768次元に逆投影（Q-Formerとの互換性維持）
+                if not hasattr(self, 'moe_to_qformer_projector'):
+                    print(f"    🔧 MoE→Q-Former逆投影層を作成中...")
+                    self.moe_to_qformer_projector = nn.Linear(
+                        self.config.llama_config['hidden_size'],  # MoE出力次元（5120）
+                        768,  # Q-Former次元（BLIP-2準拠）
+                        bias=True
+                    ).to(device=moe_output.device, dtype=moe_output.dtype)
+                    print(f"    ✅ 逆投影層作成完了: {self.config.llama_config['hidden_size']} → 768")
+                
+                # MoE出力を768次元に逆投影
+                qformer_hidden_states = self.moe_to_qformer_projector(moe_output)
+                
+                # 🔥 重要: MoE逆投影後もBFloat16を維持（dtype不一致エラー対策）
+                if qformer_hidden_states.dtype != torch.bfloat16:
+                    print(f"    🔄 MoE逆投影出力がFloat32、BFloat16に変換中...")
+                    qformer_hidden_states = qformer_hidden_states.to(dtype=torch.bfloat16)
+                
                 moe_info = moe_stats
                 
                 print(f"    ✅ MoE最適化完了: {qformer_hidden_states.shape}")
@@ -677,6 +749,13 @@ class QFormerSegmentationBridge(nn.Module):
                     expert_weights = moe_info['expert_weights']
                     print(f"    📊 エキスパート重み: {expert_weights}")
                 
+            except RuntimeError as moe_error:
+                if "Expected all tensors to be on the same device" in str(moe_error) or "shapes cannot be multiplied" in str(moe_error):
+                    print(f"    ⚠️ MoEアダプター処理エラー: {str(moe_error)[:100]}...")
+                    print(f"    📌 標準Q-Former処理にフォールバック")
+                    moe_info = {'error': 'device_or_shape_mismatch', 'details': str(moe_error)}
+                else:
+                    raise
             except Exception as moe_error:
                 print(f"    ⚠️ MoE処理失敗: {moe_error}")
                 print(f"    🔄 標準Q-Former出力継続")
@@ -691,6 +770,18 @@ class QFormerSegmentationBridge(nn.Module):
         
         # 3. 高精度リッチプロンプト生成（Web調査修正: 768次元）
         query_embeddings = qformer_outputs['query_embeds']  # (batch, 32, 768)
+        
+        # 🔍 デバッグ: dtype確認
+        print(f"  🔍 デバッグ: enhanced_sam_projector dtype確認")
+        print(f"    - query_embeddings dtype: {query_embeddings.dtype}")
+        print(f"    - query_embeddings device: {query_embeddings.device}")
+        
+        # enhanced_sam_projectorの各層のdtypeを確認
+        for i, layer in enumerate(self.enhanced_sam_projector):
+            if hasattr(layer, 'weight'):
+                print(f"    - Layer {i} ({layer.__class__.__name__}) weight dtype: {layer.weight.dtype}")
+            elif hasattr(layer, 'normalized_shape'):  # LayerNorm
+                print(f"    - Layer {i} (LayerNorm) dtype: {layer.weight.dtype if hasattr(layer, 'weight') else 'N/A'}")
         
         # 強化プロジェクターでより高品質なSAMプロンプト生成（Web調査修正: 768→256次元）
         enhanced_sam_prompts = self.enhanced_sam_projector(query_embeddings)  # (batch, 32, 256)
