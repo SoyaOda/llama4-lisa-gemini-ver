@@ -1,11 +1,15 @@
 # CLAUDE.md
 
+
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 日本語で応答すること！
 
-md_files/phase3_moe_optimization_strategy.mdに沿って実装してある。今後の方針はmd_files/phase3c_implementation_specification.md, md_files/phase3d_advanced_optimization_strategy.mdにまとめてある。
+md_files/phase3_moe_optimization_strategy.mdに沿って実装してある。まずtest_phase3b_integration_real.pyとその関連scriptを読んでプロジェクトの内容と進展度合いを理解して。現状、test_phase3b_integration_real.pyのtestでHybrid datasetがpixel_valuesを返さない仕様になっているが、phase3_moe_optimization_strategy.mdにあるようにデュアルエンコーダー前提でデータセット、モデルが動作するように変更し、testできる様にして。つまり、md_files/fundamental_architecture_fixes/multimodal_integration_fix.mdにある問題が解決されてない場合は解決しよう。適宜webでllama4やSAM2の仕様、サンプルコード、ベストプラクティスを調べつつtodoや修正方針を作り、修正して 。修正方針についてはwebリサーチでアップデートあれば適宜md_files/fundamental_architecture_fixes/multimodal_integration_fix.mdを更新すること
+
+
 
 
 

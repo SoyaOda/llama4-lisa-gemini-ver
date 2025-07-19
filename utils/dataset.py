@@ -135,8 +135,40 @@ def preprocess_sam_image(image: Image.Image, target_size: Optional[int] = None) 
     
     return image_tensor
 
-# シングルエンコーダー構成のため、Llama用画像前処理関数は削除
-# def preprocess_llama_image は削除されました
+def preprocess_llama_image(image: Image.Image, processor, target_size: int = 448) -> torch.Tensor:
+    """
+    Llama-4用画像前処理：ネイティブマルチモーダル対応
+    Llama-4 processorを使用して画像を処理
+    """
+    # Convert to RGB if necessary
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+    
+    # Llama-4のプロセッサが画像処理を持っている場合
+    if hasattr(processor, 'image_processor') and processor.image_processor is not None:
+        # Llama-4プロセッサによる画像処理
+        processed = processor.image_processor(
+            images=image,
+            return_tensors="pt"
+        )
+        pixel_values = processed['pixel_values'].squeeze(0)
+    else:
+        # フォールバック：手動でリサイズと正規化
+        # リサイズ
+        image = image.resize((target_size, target_size), Image.Resampling.LANCZOS)
+        
+        # numpy配列に変換
+        image_np = np.array(image).astype(np.float32) / 255.0
+        
+        # CHW形式に変換
+        image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float()
+        
+        # ImageNet標準正規化
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        pixel_values = (image_tensor - mean) / std
+    
+    return pixel_values
 
 def build_correct_labels_for_llama4(input_ids: torch.Tensor, tokenizer) -> torch.Tensor:
     """
@@ -227,9 +259,9 @@ class HybridDataset(torch.utils.data.Dataset):
         if self.llama_processor and self.llama_processor.tokenizer:
             self.seg_token = getattr(config, 'SEG_TOKEN', '[SEG]')
             self.seg_token_idx = setup_seg_token(self.llama_processor.tokenizer, self.seg_token)
-            # シングルエンコーダー構成: Llama4のネイティブマルチモーダルでは<image>トークンは不要
-            # self.image_token = DEFAULT_IMAGE_TOKEN
-            # self.image_token_idx = setup_image_token(self.llama_processor.tokenizer, self.image_token)
+            # デュアルエンコーダー構成: <image>トークンをセットアップ
+            self.image_token = DEFAULT_IMAGE_TOKEN
+            self.image_token_idx = setup_image_token(self.llama_processor.tokenizer, self.image_token)
             self.max_length = getattr(config, 'MODEL_MAX_LENGTH', 2048)
         else:
             raise ValueError("llama_processor は必須です")
@@ -402,8 +434,9 @@ class HybridDataset(torch.utils.data.Dataset):
                     image_pil = Image.fromarray(image_data)
                 else:
                     raise ValueError(f"サポートされていない画像形式: {type(image_data)}")
-            # シングルエンコーダー構成：SAM専用の画像処理
+            # デュアルエンコーダー構成：SAMとLlama両方の画像処理
             image_sam = preprocess_sam_image(image_pil, self.sam_image_size)
+            image_llama = preprocess_llama_image(image_pil, self.llama_processor, self.llama_image_size)
             # 元画像サイズを記録
             original_size = (image_pil.height, image_pil.width)
             resize = None
@@ -440,19 +473,25 @@ class HybridDataset(torch.utils.data.Dataset):
                 else:
                     raise ValueError(f"サポートされていない画像形式: {type(image_sam)}")
             
-            # SAM用画像処理を実行（Original-LISA準拠）
+            # デュアルエンコーダー構成：SAMとLlama両方の画像処理を実行
             image_sam = preprocess_sam_image(image_pil, self.sam_image_size)
+            # Llama-4用画像処理（image_llamaが既に処理されている場合はスキップ）
+            if 'image_llama' in locals() and image_llama is not None:
+                # 既存のimage_llamaを使用
+                pass
+            else:
+                image_llama = preprocess_llama_image(image_pil, self.llama_processor, self.llama_image_size)
             # 元画像サイズを記録（マスク処理用）
             original_size = (image_pil.height, image_pil.width)
         else:
             # len(sample) == 5の場合は既に処理済み
             original_size = None
 
-        # シングルエンコーダー構成：Llama-4のapply_chat_templateを使用
-        # これにより<|image|>トークンが自動的に挿入される
+        # デュアルエンコーダー構成：Llama-4とSAM2両方の処理
+        # Llama-4のapply_chat_templateを使用（画像込み）
         clean_prompt = text_prompt.replace('<image>\n', '').replace('<image>', '').strip()
         
-        # Llama-4のネイティブフォーマットでメッセージを作成
+        # Llama-4のネイティブマルチモーダルフォーマットでメッセージを作成
         messages = [
             {
                 "role": "user",
@@ -464,35 +503,56 @@ class HybridDataset(torch.utils.data.Dataset):
         ]
         
         # apply_chat_templateでLlama-4形式のテキストを生成
-        # これにより<|image|>トークンが自動的に挿入される
         formatted_prompt = self.llama_processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=False  # テキストとして取得
         )
         
-        # テキストのみをトークン化（画像処理はSAMが行う）
+        # テキストと画像を一緒に処理（Llama-4のネイティブマルチモーダル）
         try:
-            text_inputs = self.llama_processor.tokenizer(
-                formatted_prompt,
+            # Llama-4用画像がtensorの場合、PILに変換
+            if isinstance(image_llama, torch.Tensor):
+                # 逆正規化
+                mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                denorm_image = image_llama * std + mean
+                denorm_image = torch.clamp(denorm_image, 0, 1)
+                # HWC形式に変換してPILイメージに
+                image_np = (denorm_image.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                image_for_processor = Image.fromarray(image_np)
+            else:
+                image_for_processor = image_pil
+            
+            # Llama-4プロセッサで画像とテキストを処理
+            llama_inputs = self.llama_processor(
+                text=formatted_prompt,
+                images=image_for_processor,
                 return_tensors="pt",
                 padding=False,
                 truncation=True,
                 max_length=self.max_length
             )
-            input_ids = text_inputs['input_ids'].squeeze(0)
-            attention_mask = text_inputs['attention_mask'].squeeze(0)
             
-            # SAM用画像処理は既に完了
-            # image_sam = preprocess_sam_image(image_pil, self.sam_image_size) は上で実行済み
+            input_ids = llama_inputs['input_ids'].squeeze(0)
+            attention_mask = llama_inputs['attention_mask'].squeeze(0)
+            
+            # pixel_valuesがある場合は取得、なければ既に処理済みのimage_llamaを使用
+            if 'pixel_values' in llama_inputs:
+                pixel_values = llama_inputs['pixel_values'].squeeze(0)
+            else:
+                pixel_values = image_llama
+                
         except Exception as e:
-            print(f"❌ テキスト処理エラー: {e}")
+            print(f"❌ Llama-4マルチモーダル処理エラー: {e}")
             print(f"   テキスト: {formatted_prompt[:100]}...")
-            raise RuntimeError(f"テキスト処理に失敗: {e}")
+            raise RuntimeError(f"Llama-4処理に失敗: {e}")
 
-        # シングルエンコーダー構成のため、image_llamaの処理は削除
+        # デュアルエンコーダー構成：両方の画像を正しい形状に
         if image_sam.dim() == 4:
             image_sam = image_sam.squeeze(0)
+        if pixel_values.dim() == 4:
+            pixel_values = pixel_values.squeeze(0)
 
         seg_token_mask = (input_ids == self.seg_token_idx)
         labels = build_correct_labels_for_llama4(input_ids, self.llama_processor.tokenizer)
@@ -529,8 +589,8 @@ class HybridDataset(torch.utils.data.Dataset):
             'input_ids': input_ids,
             'labels': labels,
             'attention_mask': attention_mask,
-            'sam_pixel_values': image_sam,  # シングルエンコーダー構成：SAM専用
-            # 'images_for_llama' は削除（Llama4に画像を渡さない）
+            'pixel_values': pixel_values,        # デュアルエンコーダー構成：Llama-4用（追加）
+            'sam_pixel_values': image_sam,       # デュアルエンコーダー構成：SAM2用
             'ground_truth_mask': ground_truth_mask if has_mask else None,
             'has_mask': has_mask,
             'seg_token_mask': seg_token_mask,
@@ -546,8 +606,8 @@ class HybridDataset(torch.utils.data.Dataset):
 
 def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     """
-    シングルエンコーダー構成対応のカスタムcollate関数
-    SAM専用パイプラインに適応
+    デュアルエンコーダー構成対応のカスタムcollate関数
+    Llama-4とSAM2両方のパイプラインに対応
     
     最大シーケンス長は設定ファイルのMODEL_MAX_LENGTHを自動的に使用:
     - config_small_test.py が利用可能な場合: 512 (メモリ効率優先)
@@ -556,8 +616,9 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     """
     config = get_config()
     sam_image_size = getattr(config, 'SAM_IMAGE_SIZE', 1024)
-    # シングルエンコーダー構成: SAM画像のみ
-    sam_pixel_values = []
+    # デュアルエンコーダー構成: Llama-4とSAM2両方の画像
+    pixel_values = []  # Llama-4用
+    sam_pixel_values = []  # SAM2用
     input_ids = []
     attention_mask_list = []
     labels = []
@@ -573,7 +634,9 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
     sampled_classes_list = []
     
     for item in batch:
-        # シングルエンコーダー構成: sam_pixel_valuesのみを収集
+        # デュアルエンコーダー構成: 両方の画像を収集
+        if "pixel_values" in item:
+            pixel_values.append(item["pixel_values"])
         sam_pixel_values.append(item["sam_pixel_values"])
         input_ids.append(item["input_ids"])
         attention_mask_list.append(item["attention_mask"])
@@ -599,7 +662,12 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
         questions_list.append(item.get("questions"))
         sampled_classes_list.append(item.get("sampled_classes"))
     
-    # シングルエンコーダー構成: SAM画像のみスタック
+    # デュアルエンコーダー構成: 両方の画像をスタック
+    if pixel_values:
+        pixel_values = torch.stack(pixel_values)
+    else:
+        # フォールバック：pixel_valuesがない場合はSAM画像から生成
+        pixel_values = torch.stack([F.interpolate(sam.unsqueeze(0), size=(448, 448), mode='bilinear').squeeze(0) for sam in sam_pixel_values])
     sam_pixel_values = torch.stack(sam_pixel_values)
     max_length = max(ids.size(0) for ids in input_ids)
     def pad_sequence(sequences, max_len, pad_value=0):
@@ -625,8 +693,9 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
         else:
             label_list.append(None)
     return {
-        # シングルエンコーダー構成: sam_pixel_valuesのみ返す
-        "sam_pixel_values": sam_pixel_values,           # (B, 3, 1024, 1024)
+        # デュアルエンコーダー構成: 両方の画像を返す
+        "pixel_values": pixel_values,                    # (B, 3, 448, 448) - Llama-4用
+        "sam_pixel_values": sam_pixel_values,           # (B, 3, 1024, 1024) - SAM2用
         "input_ids": input_ids_padded,                  # (B, unified_max_length)
         "attention_mask": attention_mask_padded,        # (B, unified_max_length)
         "labels": labels_padded,                        # (B, unified_max_length)
@@ -643,7 +712,7 @@ def collate_fn(batch: List[Dict]) -> Dict[str, Any]:
         "questions_list": questions_list,
         "sampled_classes_list": sampled_classes_list,
         # 互換性のためのエイリアス
-        "images": sam_pixel_values,
+        "images": pixel_values,  # デュアルエンコーダー構成: Llama-4用画像を使用
     }
 
 class LisaLlama4ValDataset(torch.utils.data.Dataset):

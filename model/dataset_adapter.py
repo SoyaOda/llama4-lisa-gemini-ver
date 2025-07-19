@@ -49,43 +49,66 @@ from typing import Dict, Any
 
 def adapt_dataset_for_qformer(batch: Dict[str, Any]) -> Dict[str, Any]:
     """
-    HybridDatasetのシングルエンコーダー構成出力を
+    HybridDatasetのデュアルエンコーダー構成出力を
     QFormerSegmentationBridgeの期待する形式に変換
     
     Args:
         batch: HybridDatasetからのバッチデータ
-            - sam_pixel_values: SAM用画像データ
+            - pixel_values: Llama-4用画像データ (448x448)
+            - sam_pixel_values: SAM2用画像データ (1024x1024)
             - input_ids: テキスト入力ID
             - attention_mask: アテンションマスク
             - labels: ラベル
             
     Returns:
         QFormerSegmentationBridge用に変換されたバッチ
-            - images: sam_pixel_valuesをリネーム
+            - images: Llama-4用画像（pixel_values）
+            - sam_images: SAM2用画像（sam_pixel_values）  
             - その他のフィールドはそのまま
     """
     adapted_batch = batch.copy()
     
-    # シングルエンコーダー構成：sam_pixel_valuesをimagesとして使用
-    if 'sam_pixel_values' in batch and 'pixel_values' not in batch:
-        adapted_batch['images'] = batch['sam_pixel_values']
-        # 元のキーも保持（互換性のため）
-        adapted_batch['sam_pixel_values'] = batch['sam_pixel_values']
+    # デュアルエンコーダー構成：両方の画像を適切にマッピング
+    if 'pixel_values' in batch and 'sam_pixel_values' in batch:
+        # Llama-4用画像
+        adapted_batch['images'] = batch['pixel_values']
+        # SAM2用画像
+        adapted_batch['sam_images'] = batch['sam_pixel_values']
         
-        print(f"✓ データセットアダプター: sam_pixel_values → images 変換完了")
+        print(f"✓ デュアルエンコーダーアダプター: 両方の画像を変換完了")
+        print(f"  - Llama-4画像形状: {adapted_batch['images'].shape}")
+        print(f"  - SAM2画像形状: {adapted_batch['sam_images'].shape}")
+        
+    # シングルエンコーダー構成のフォールバック（互換性のため）
+    elif 'sam_pixel_values' in batch and 'pixel_values' not in batch:
+        adapted_batch['images'] = batch['sam_pixel_values']
+        adapted_batch['sam_images'] = batch['sam_pixel_values']
+        
+        print(f"✓ シングルエンコーダーアダプター: sam_pixel_values → images 変換完了")
         print(f"  - 画像形状: {adapted_batch['images'].shape}")
     
-    # pixel_valuesが存在する場合（デュアルストリーム構成）
-    elif 'pixel_values' in batch:
+    # pixel_valuesのみ存在する場合
+    elif 'pixel_values' in batch and 'sam_pixel_values' not in batch:
         adapted_batch['images'] = batch['pixel_values']
-        print(f"✓ データセットアダプター: pixel_values → images 変換完了")
-        print(f"  - 画像形状: {adapted_batch['images'].shape}")
+        # SAM用画像をLlama画像から生成（リサイズ）
+        import torch.nn.functional as F
+        sam_images = F.interpolate(
+            batch['pixel_values'],
+            size=(1024, 1024),
+            mode='bilinear',
+            align_corners=False
+        )
+        adapted_batch['sam_images'] = sam_images
+        
+        print(f"✓ データセットアダプター: pixel_valuesからSAM画像を生成")
+        print(f"  - Llama-4画像形状: {adapted_batch['images'].shape}")
+        print(f"  - SAM2画像形状（生成）: {adapted_batch['sam_images'].shape}")
     
     # どちらも存在しない場合はエラー
     else:
         raise ValueError(
             "バッチデータに画像データが含まれていません。"
-            "'sam_pixel_values' または 'pixel_values' が必要です。"
+            "'pixel_values' または 'sam_pixel_values' が必要です。"
         )
     
     return adapted_batch
@@ -123,10 +146,10 @@ def create_qformer_compatible_dataloader(original_dataloader):
     return QFormerCompatibleDataLoader(original_dataloader)
 
 
-# Option B実装：SAM2をビジョンエンコーダーとして使用する場合の設定
-def configure_sam_as_vision_encoder(config):
+# デュアルエンコーダー構成のための設定
+def configure_dual_encoder(config):
     """
-    SAM2をビジョンエンコーダーとして使用するための設定を追加
+    デュアルエンコーダー構成のための設定を適用
     
     Args:
         config: LlamaQFormerSAM2Config インスタンス
@@ -134,16 +157,22 @@ def configure_sam_as_vision_encoder(config):
     Returns:
         更新されたconfig
     """
-    # SAM2をビジョンエンコーダーとして使用
-    config.use_sam_as_vision_encoder = True
+    # デュアルエンコーダー設定
+    config.use_dual_encoder = True
+    config.use_sam_as_vision_encoder = False  # SAM2はセグメンテーション専用
     
-    # Q-FormerがSAM2の特徴量を直接使用するための設定
+    # Llama-4のネイティブマルチモーダル活用
+    config.llama_native_multimodal = True
+    config.early_fusion = True
+    
+    # Q-Formerは両方の特徴を統合
+    config.qformer_cross_modal = True
     config.sam_feature_extraction = True
-    config.skip_llama_vision_processing = True
     
-    print("✓ SAM2ビジョンエンコーダー設定完了")
-    print("  - use_sam_as_vision_encoder: True")
-    print("  - sam_feature_extraction: True")
-    print("  - skip_llama_vision_processing: True")
+    print("✓ デュアルエンコーダー設定完了")
+    print("  - use_dual_encoder: True")  
+    print("  - llama_native_multimodal: True")
+    print("  - early_fusion: True")
+    print("  - qformer_cross_modal: True")
     
     return config

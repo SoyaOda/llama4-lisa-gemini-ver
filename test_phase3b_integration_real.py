@@ -340,11 +340,12 @@ class Phase3BRealIntegrationTest:
             self.sam2_model = None  # 統合ブリッジ内で管理
             logger.info("✓ SAM2は統合ブリッジ内で初期化されます")
             
-            # 4. 統合ブリッジ初期化（Option B: シングルエンコーダー構成対応）
-            logger.info("🔄 Q-Former-SAM2統合ブリッジ初期化（シングルエンコーダー対応版）...")
+            # 4. 統合ブリッジ初期化（デュアルエンコーダー構成対応）
+            logger.info("🔄 Q-Former-SAM2統合ブリッジ初期化（デュアルエンコーダー対応版）...")
             qformer_config = LlamaQFormerSAM2Config()
-            # Option B: use_sam_as_vision_encoder設定を追加
-            qformer_config.use_sam_as_vision_encoder = True  # SAM2をビジョンエンコーダーとして使用
+            # デュアルエンコーダー設定を適用
+            from model.dataset_adapter import configure_dual_encoder
+            qformer_config = configure_dual_encoder(qformer_config)
             
             # デバッグ: 初期化前のデバイス状態確認
             logger.info("🔍 デバッグ: 統合ブリッジ初期化前の状態確認...")
@@ -384,7 +385,7 @@ class Phase3BRealIntegrationTest:
             else:
                 logger.info("  ✓ meta tensorsは検出されませんでした")
             
-            logger.info("✓ 統合ブリッジ初期化完了（シングルエンコーダー対応版）")
+            logger.info("✓ 統合ブリッジ初期化完了（デュアルエンコーダー対応版）")
             
             logger.info("✅ 全個別コンポーネント初期化完了")
             
@@ -563,36 +564,56 @@ class Phase3BRealIntegrationTest:
                 
                 logger.info(f"✓ SAM2画像処理: {sam_pixel_values.shape}")
                 
-                # 2. Llama-4テキスト+画像処理（overfit成功パターン準拠）
-                if hasattr(self.llama4_processor, 'apply_chat_template'):
-                    # Web調査準拠：直接的プレースホルダー方法
-                    llama_inputs = self.llama4_processor(
-                        text=test_prompt_with_placeholder,
-                        images=test_image,
-                        return_tensors="pt"
-                    )
+                # 2. Llama-4テキスト+画像処理（デュアルエンコーダー対応）
+                llama_inputs = self.llama4_processor(
+                    text=test_prompt_with_placeholder,
+                    images=test_image,
+                    return_tensors="pt"
+                )
+                
+                # 🆕 Llama-4用画像処理（pixel_values取得） - デュアルエンコーダー対応
+                logger.info("📊 デュアルエンコーダー画像処理デバッグ:")
+                if 'pixel_values' in llama_inputs:
+                    pixel_values = llama_inputs['pixel_values'].squeeze(0)
+                    logger.info(f"  ✅ pixel_values (Llama-4用): {pixel_values.shape}")
                 else:
-                    # フォールバック：プレースホルダー付きテキスト処理
-                    llama_inputs = self.llama4_processor(
-                        text=test_prompt_with_placeholder,
-                        images=test_image,
-                        return_tensors="pt"
-                    )
+                    logger.info("  ⚠️ llama_inputsにpixel_valuesがありません。手動処理を実行...")
+                    # フォールバック：手動で画像処理
+                    if DATASET_AVAILABLE:
+                        from utils.dataset import preprocess_llama_image
+                        pixel_values = preprocess_llama_image(test_image, self.llama4_processor, 448)
+                        logger.info(f"  ✅ 手動処理でpixel_values生成: {pixel_values.shape}")
+                    else:
+                        # 簡易実装
+                        test_image_resized = test_image.resize((448, 448))
+                        image_array = np.array(test_image_resized).astype(np.float32) / 255.0
+                        pixel_values = torch.from_numpy(image_array).permute(2, 0, 1)
+                        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+                        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+                        pixel_values = (pixel_values - mean) / std
                 
                 # Option E+F: モデル初期化時の型統一により、プロセッサレベルの修正は不要
                 # BFloat16で統一されたモデルにより、dtype不一致が根本解決される
                 logger.info("✓ モデル初期化時の型統一により、dtype不一致を根本解決")
                 
                 logger.info(f"✓ Llama-4マルチモーダル処理: {llama_inputs.input_ids.shape}")
+                logger.info(f"✓ Llama-4画像処理: {pixel_values.shape}")
                 
-                # 3. 統合データ準備
+                # 3. 統合データ準備（デュアルエンコーダー対応）
                 real_data = {
-                    "sam_pixel_values": sam_pixel_values,
+                    "pixel_values": pixel_values,        # Llama-4用画像（追加）
+                    "sam_pixel_values": sam_pixel_values, # SAM2用画像
                     "llama_inputs": llama_inputs,
                     "test_image": test_image,
                     "test_prompt": test_prompt_with_placeholder,
                     "batch_size": 1
                 }
+                
+                # 🆕 デュアルエンコーダーデータ最終確認
+                logger.info("📋 デュアルエンコーダーデータ最終確認:")
+                logger.info(f"  - pixel_values (Llama-4用): {real_data['pixel_values'].shape} ({real_data['pixel_values'].dtype})")
+                logger.info(f"  - sam_pixel_values (SAM2用): {real_data['sam_pixel_values'].shape} ({real_data['sam_pixel_values'].dtype})")
+                logger.info("  ✅ 両方の画像データが正しく準備されました")
                 
                 logger.info("✅ 実際のテストデータ準備完了")
                 
@@ -945,9 +966,10 @@ class Phase3BRealIntegrationTest:
                             self.qformer_bridge = self.qformer_bridge.to(device=device, dtype=target_dtype)
                             logger.info("  ✓ 通常のdevice/dtype移動完了")
                         
-                        # テストデータをQFormer用に変換
+                        # テストデータをQFormer用に変換（デュアルエンコーダー対応）
                         qformer_data = {
-                            'sam_pixel_values': test_data["sam_pixel_values"],
+                            'pixel_values': test_data["pixel_values"],         # Llama-4用画像
+                            'sam_pixel_values': test_data["sam_pixel_values"], # SAM2用画像
                             'input_ids': test_data["llama_inputs"]["input_ids"],
                             'attention_mask': test_data["llama_inputs"]["attention_mask"],
                             'labels': test_data["llama_inputs"]["input_ids"]  # テスト用
@@ -955,6 +977,30 @@ class Phase3BRealIntegrationTest:
                         
                         # データアダプター使用
                         adapted_data = adapt_dataset_for_qformer(qformer_data)
+                        
+                        # 🆕 デュアルエンコーダーデバッグ情報
+                        logger.info("  📊 デュアルエンコーダーデバッグ:")
+                        if hasattr(self.qformer_bridge.config, 'use_dual_encoder'):
+                            logger.info(f"    - use_dual_encoder: {self.qformer_bridge.config.use_dual_encoder}")
+                            logger.info(f"    - llama_native_multimodal: {getattr(self.qformer_bridge.config, 'llama_native_multimodal', 'N/A')}")
+                            logger.info(f"    - early_fusion: {getattr(self.qformer_bridge.config, 'early_fusion', 'N/A')}")
+                            logger.info(f"    - qformer_cross_modal: {getattr(self.qformer_bridge.config, 'qformer_cross_modal', 'N/A')}")
+                        
+                        # adapted_dataの内容確認
+                        logger.info("  📋 アダプター出力確認:")
+                        for key, value in adapted_data.items():
+                            if isinstance(value, torch.Tensor):
+                                logger.info(f"    - {key}: {value.shape} ({value.dtype})")
+                            else:
+                                logger.info(f"    - {key}: {type(value).__name__}")
+                        
+                        # 両方の画像が存在することを確認
+                        if 'images' in adapted_data and 'sam_images' in adapted_data:
+                            logger.info("  ✅ デュアルエンコーダーデータ確認:")
+                            logger.info(f"    - images (Llama-4用): {adapted_data['images'].shape}")
+                            logger.info(f"    - sam_images (SAM2用): {adapted_data['sam_images'].shape}")
+                        else:
+                            logger.warning("  ⚠️ デュアルエンコーダーデータが不完全です")
                         
                         # QFormerSegmentationBridge推論
                         try:
@@ -964,6 +1010,7 @@ class Phase3BRealIntegrationTest:
                                 
                                 qformer_outputs = self.qformer_bridge(
                                     images=adapted_data['images'].unsqueeze(0).to(device=device, dtype=target_dtype),
+                                    sam_images=adapted_data.get('sam_images', adapted_data['images']).unsqueeze(0).to(device=device, dtype=target_dtype),
                                     input_ids=adapted_data['input_ids'].to(device),
                                     attention_mask=adapted_data['attention_mask'].to(device),
                                     labels=adapted_data['labels'].to(device),

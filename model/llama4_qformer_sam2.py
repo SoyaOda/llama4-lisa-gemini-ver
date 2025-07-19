@@ -93,6 +93,13 @@ class LlamaQFormerSAM2Config:
         # セグメンテーション特別トークン
         self.seg_token = config_linux.SEG_TOKEN  # "[SEG]"
         
+        # 🆕 デュアルエンコーダー設定（2025年7月追加）
+        self.use_dual_encoder = False  # デフォルトはシングルエンコーダー（互換性維持）
+        self.llama_native_multimodal = True  # Llama-4のネイティブマルチモーダル活用
+        self.early_fusion = True  # Early Fusion戦略
+        self.qformer_cross_modal = True  # Q-Formerでのクロスモーダル融合
+        self.sam_feature_extraction = True  # SAM2での特徴抽出有効化
+        
         # 🔥 MoEアダプター互換性のためのllama_config辞書
         self.llama_config = {
             'hidden_size': self.llama_hidden_size,  # 5120
@@ -596,6 +603,7 @@ class QFormerSegmentationBridge(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        sam_images: Optional[torch.Tensor] = None,  # 🆕 デュアルエンコーダー対応
         return_dict: bool = True
     ) -> Dict[str, Any]:
         """
@@ -605,19 +613,33 @@ class QFormerSegmentationBridge(nn.Module):
         1. Llama-4-Scout: テキスト+画像理解
         2. Q-Former: 64クエリで多角的特徴抽出
         3. SAM2: リッチプロンプトでセグメンテーション
+        
+        デュアルエンコーダー対応（2025年7月）:
+        - images: Llama-4用画像 (448x448)
+        - sam_images: SAM2用画像 (1024x1024)
         """
         
         batch_size = images.size(0)
         device = images.device
         
-        print(f"🔄 方法3フォワードパス開始...")
+        # デュアルエンコーダーモードの判定
+        is_dual_encoder = (
+            self.config.use_dual_encoder and 
+            sam_images is not None and 
+            sam_images.size(0) == batch_size
+        )
+        
+        if is_dual_encoder:
+            print(f"🔄 方法3フォワードパス開始（デュアルエンコーダーモード）...")
+        else:
+            print(f"🔄 方法3フォワードパス開始（シングルエンコーダーモード）...")
         
         # 1. Llama-4-Scout: マルチモーダル理解
         print(f"  🧠 Llama-4-Scout推論...")
         llama_outputs = self.llama_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            images=images,
+            images=images,  # Llama-4用画像
             labels=labels,
             output_hidden_states=True,
             return_dict=True
@@ -803,13 +825,29 @@ class QFormerSegmentationBridge(nn.Module):
         
         predicted_masks = []
         
+        # デュアルエンコーダーモードでSAM2用画像を選択
+        if is_dual_encoder:
+            sam_input_images = sam_images  # SAM2専用画像を使用
+            print(f"    📸 デュアルエンコーダー: SAM2専用画像使用 {sam_input_images.shape}")
+        else:
+            sam_input_images = images  # Llama-4画像を使用（シングルエンコーダー）
+            print(f"    📸 シングルエンコーダー: Llama-4画像使用 {sam_input_images.shape}")
+        
         for batch_idx in range(batch_size):
             # 2025年ベストプラクティス: SAM2用の画像前処理完全版
-            image_tensor = images[batch_idx].permute(1, 2, 0)  # (H, W, 3)
+            image_tensor = sam_input_images[batch_idx].permute(1, 2, 0)  # (H, W, 3)
             
             # BFloat16 → Float32 → uint8変換（Web調査結果ベース）
             if image_tensor.dtype == torch.bfloat16:
                 image_tensor = image_tensor.to(torch.float32)
+            
+            # 正規化されている場合は逆正規化
+            if image_tensor.min() < 0 or image_tensor.max() <= 1.0:
+                # ImageNet正規化の逆変換
+                mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 3).to(image_tensor.device)
+                std = torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 3).to(image_tensor.device)
+                image_tensor = image_tensor * std + mean
+                image_tensor = image_tensor * 255.0
             
             # [0, 255]範囲にクランプしてuint8に変換
             image_tensor = torch.clamp(image_tensor, 0, 255)
