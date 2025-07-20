@@ -120,6 +120,12 @@ class LlamaQFormerSAM2Config:
             'lora_alpha': mle_base_config['lora_alpha'],                 # 32 (論文準拠)
             'expert_weights': mle_base_config['expert_weights']          # 論文準拠重み配分
         }
+        
+        # 🆕 Phase 3C: Sa2VA風[SEG]トークン設定
+        seg_token_config = config_linux.get_seg_token_config()
+        self.use_seg_token = seg_token_config['use_seg_token']
+        self.use_multi_frame_seg = seg_token_config['use_multi_frame']
+        self.seg_token_return_attention = seg_token_config['return_attention']
 
 
 
@@ -165,7 +171,13 @@ class QFormerSegmentationBridge(nn.Module):
         else:
             self.moe_adapter = None
         
-        # 5. 損失関数初期化（2025年ベストプラクティス）
+        # 🆕 5. Phase 3C: Sa2VA風[SEG]トークン生成器初期化
+        if self.config.use_seg_token:
+            self._init_seg_token_generator()
+        else:
+            self.seg_token_generator = None
+        
+        # 6. 損失関数初期化（2025年ベストプラクティス）
         self._init_loss_function()
         
         # 6. 最終デバイス配置確認・統一
@@ -518,6 +530,38 @@ class QFormerSegmentationBridge(nn.Module):
         
         print(f"✅ 全コンポーネント デバイス配置統一完了")
     
+    def _init_seg_token_generator(self):
+        """🆕 Phase 3C: Sa2VA風[SEG]トークン生成器初期化"""
+        print(f"\n🔄 Phase 3C: Sa2VA風[SEG]トークン生成器初期化中...")
+        
+        try:
+            from model.seg_token_generator import create_seg_token_generator
+            
+            # [SEG]トークン生成器作成
+            self.seg_token_generator = create_seg_token_generator(
+                config=self.config,
+                multi_frame=self.config.use_multi_frame_seg
+            )
+            
+            # 🔥 デバイス・dtype統一（提案A実装）
+            base_device = next(self.llama_model.parameters()).device
+            base_dtype = next(self.llama_model.parameters()).dtype
+            self.seg_token_generator = self.seg_token_generator.to(device=base_device, dtype=base_dtype)
+            
+            print(f"✅ Phase 3C: [SEG]トークン生成器初期化完了")
+            print(f"  - モード: {'動画対応' if self.config.use_multi_frame_seg else '静止画'}")
+            print(f"  - Q-Former次元: {self.config.qformer_config['hidden_size']}")
+            print(f"  - Llama次元: {self.config.llama_hidden_size}")
+            print(f"  - SAMプロンプト次元: {self.config.qformer_config['sam_prompt_dim']}")
+            print(f"  - 注意重み返却: {self.config.seg_token_return_attention}")
+            print(f"  - デバイス: {base_device}")
+            print(f"  - データ型: {base_dtype}")
+            
+        except Exception as e:
+            print(f"  ❌ [SEG]トークン生成器初期化失敗: {e}")
+            print(f"  🔄 標準モード継続 ([SEG]トークン無効)")
+            self.seg_token_generator = None
+    
     def set_training_stage(self, stage: int):
         """学習段階設定"""
         self.training_stage = stage
@@ -703,6 +747,32 @@ class QFormerSegmentationBridge(nn.Module):
         qformer_hidden_states = qformer_outputs.last_hidden_state
         print(f"  ✅ Q-Former処理完了: {qformer_hidden_states.shape}")
         
+        # 🆕 Phase 3C: Sa2VA風[SEG]トークン生成
+        seg_token_outputs = None
+        if self.config.use_seg_token and self.seg_token_generator is not None:
+            print(f"  🔄 Phase 3C: [SEG]トークン生成中...")
+            try:
+                # Q-Former出力を使って[SEG]トークン生成
+                seg_token_outputs = self.seg_token_generator(
+                    qformer_outputs={'query_embeds': qformer_hidden_states},
+                    llama_hidden_states=encoder_hidden_states,
+                    return_attention=self.config.seg_token_return_attention
+                )
+                
+                print(f"  ✅ [SEG]トークン生成完了")
+                print(f"    - SEGトークン: {seg_token_outputs['seg_token'].shape}")
+                print(f"    - SAMプロンプト: {seg_token_outputs['sam_prompt'].shape}")
+                
+                if 'attention_weights' in seg_token_outputs:
+                    # 最も注目されているQ-Formerクエリ
+                    top_queries = seg_token_outputs['attention_weights'].argmax(dim=-1)
+                    print(f"    - 注目クエリ: {top_queries.tolist()}")
+                    
+            except Exception as e:
+                print(f"  ⚠️ [SEG]トークン生成エラー: {e}")
+                print(f"  🔄 標準処理継続")
+                seg_token_outputs = None
+        
         # 🆕 Phase 3A: MoE統合処理
         moe_info = {}
         if self.enable_moe and self.moe_adapter is not None:
@@ -805,12 +875,31 @@ class QFormerSegmentationBridge(nn.Module):
             elif hasattr(layer, 'normalized_shape'):  # LayerNorm
                 print(f"    - Layer {i} (LayerNorm) dtype: {layer.weight.dtype if hasattr(layer, 'weight') else 'N/A'}")
         
-        # 強化プロジェクターでより高品質なSAMプロンプト生成（Web調査修正: 768→256次元）
-        enhanced_sam_prompts = self.enhanced_sam_projector(query_embeddings)  # (batch, 32, 256)
-        
-        # 元のQ-Formerプロンプトと融合（アンサンブル効果）（Web調査修正: 32次元統一）
-        original_sam_prompts = qformer_outputs['sam_prompts']  # (batch, 32, 256)
-        sam_prompts = 0.7 * enhanced_sam_prompts + 0.3 * original_sam_prompts  # 重み付き平均
+        # 🆕 Phase 3C: [SEG]トークン由来のプロンプトを優先使用
+        if seg_token_outputs is not None and 'sam_prompt' in seg_token_outputs:
+            # [SEG]トークンから生成されたSAMプロンプトを使用
+            seg_sam_prompt = seg_token_outputs['sam_prompt']  # (batch, 256)
+            
+            # 32個のクエリに拡張（各クエリに同じ[SEG]プロンプトを適用）
+            seg_sam_prompts = seg_sam_prompt.unsqueeze(1).expand(-1, 32, -1)  # (batch, 32, 256)
+            
+            # 強化プロジェクターでより高品質なSAMプロンプト生成（Web調査修正: 768→256次元）
+            enhanced_sam_prompts = self.enhanced_sam_projector(query_embeddings)  # (batch, 32, 256)
+            
+            # [SEG]トークンプロンプトと強化プロンプトを融合
+            sam_prompts = 0.5 * seg_sam_prompts + 0.5 * enhanced_sam_prompts  # Sa2VA風融合
+            
+            print(f"  ✅ [SEG]トークン統合SAMプロンプト生成")
+            print(f"    - [SEG]プロンプト: 50%")
+            print(f"    - 強化プロンプト: 50%")
+        else:
+            # 通常の処理（[SEG]トークンなし）
+            # 強化プロジェクターでより高品質なSAMプロンプト生成（Web調査修正: 768→256次元）
+            enhanced_sam_prompts = self.enhanced_sam_projector(query_embeddings)  # (batch, 32, 256)
+            
+            # 元のQ-Formerプロンプトと融合（アンサンブル効果）（Web調査修正: 32次元統一）
+            original_sam_prompts = qformer_outputs['sam_prompts']  # (batch, 32, 256)
+            sam_prompts = 0.7 * enhanced_sam_prompts + 0.3 * original_sam_prompts  # 重み付き平均
         
         print(f"  ✅ 高精度Q-Former抽出完了: {sam_prompts.shape}")
         print(f"    - 強化プロンプト: {enhanced_sam_prompts.shape}")
@@ -907,6 +996,13 @@ class QFormerSegmentationBridge(nn.Module):
             'method': 'qformer_pure',
             'num_queries': sam_prompts.size(1),
         }
+        
+        # 🆕 Phase 3C: [SEG]トークン情報を追加
+        if seg_token_outputs is not None:
+            outputs['seg_token'] = seg_token_outputs['seg_token']
+            outputs['seg_sam_prompt'] = seg_token_outputs['sam_prompt']
+            if 'attention_weights' in seg_token_outputs:
+                outputs['seg_attention_weights'] = seg_token_outputs['attention_weights']
         
         return outputs if return_dict else (outputs['text_loss'], predicted_masks, query_embeddings)
 

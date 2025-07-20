@@ -133,6 +133,12 @@ class Phase3BRealTestConfig:
         mle_config = config_linux.get_mle_config()
         self.expected_improvement = mle_config['expected_improvement']
         
+        # 🆕 Phase 3C: [SEG]トークン設定
+        seg_config = config_linux.get_seg_token_config()
+        self.use_seg_token = seg_config['use_seg_token']
+        self.use_multi_frame_seg = seg_config['use_multi_frame']
+        self.seg_token_return_attention = seg_config['return_attention']
+        
         logger.info(f"📋 Phase 3B実機テスト設定:")
         logger.info(f"  - 論文準拠LoRA: r={self.lora_r}, alpha={self.lora_alpha}")
         logger.info(f"  - 期待性能向上: {self.expected_improvement}%")
@@ -822,7 +828,40 @@ class Phase3BRealIntegrationTest:
                         }
                         logger.info(f"  ✓ デュアルパスウェイ: {decoder_results['fused_masks'].shape}")
                     
-                    # c. QFormerSegmentationBridgeテスト（シングルエンコーダー対応）
+                    # c. [SEG]トークン生成テスト（Phase 3C）
+                    if self.config.use_seg_token and hasattr(self.qformer_bridge, 'seg_token_generator'):
+                        logger.info("  🔄 [SEG]トークン生成テスト...")
+                        
+                        # テスト用のQ-Former出力を作成
+                        test_qformer_outputs = {
+                            'query_embeds': torch.randn(
+                                batch_size, 32, 768, 
+                                dtype=torch.bfloat16, 
+                                device=device
+                            )
+                        }
+                        
+                        # [SEG]トークン生成
+                        seg_outputs = self.qformer_bridge.seg_token_generator(
+                            qformer_outputs=test_qformer_outputs,
+                            llama_hidden_states=llama_hidden_states,
+                            return_attention=True
+                        )
+                        
+                        phase3b_results['seg_token_generation'] = {
+                            'seg_token_shape': str(seg_outputs['seg_token'].shape),
+                            'sam_prompt_shape': str(seg_outputs['sam_prompt'].shape),
+                            'success': True
+                        }
+                        
+                        if 'attention_weights' in seg_outputs:
+                            top_queries = seg_outputs['attention_weights'].argmax(dim=-1)
+                            phase3b_results['seg_token_generation']['top_queries'] = top_queries.tolist()
+                        
+                        logger.info(f"  ✓ [SEG]トークン生成: {seg_outputs['seg_token'].shape}")
+                        logger.info(f"  ✓ SAMプロンプト: {seg_outputs['sam_prompt'].shape}")
+                    
+                    # d. QFormerSegmentationBridgeテスト（シングルエンコーダー対応）
                     if self.qformer_bridge:
                         logger.info("  🔄 QFormerSegmentationBridgeテスト（シングルエンコーダー対応）...")
                         

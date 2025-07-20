@@ -293,6 +293,46 @@ def get_test_config() -> Dict[str, Any]:
     }
 
 # ==============================================================================
+# 🆕 Sa2VA風[SEG]トークン設定（Phase 3C - Sa2VA統一トークン空間実装）
+# ==============================================================================
+# Sa2VA (arXiv:2501.04001) 準拠の[SEG]トークン実装設定
+USE_SEG_TOKEN = True  # [SEG]トークン生成器を使用するか
+USE_MULTI_FRAME_SEG = False  # 動画処理用の拡張版を使用するか
+SEG_TOKEN_RETURN_ATTENTION = False  # 注意重みを返すか（デバッグ用）
+
+# 統一トークン空間設定（将来の拡張用）
+USE_PARTIAL_UNIFIED_SPACE = False  # Phase 2: 部分的統一トークン空間
+USE_DYNAMIC_SAM_CONTROL = False  # Phase 3: 動的SAM2制御
+
+def get_seg_token_config() -> Dict[str, Any]:
+    """
+    Sa2VA風[SEG]トークン設定取得
+    
+    Returns:
+        Dict: [SEG]トークン生成設定
+    """
+    return {
+        # 基本設定
+        'use_seg_token': USE_SEG_TOKEN,
+        'use_multi_frame': USE_MULTI_FRAME_SEG,
+        'return_attention': SEG_TOKEN_RETURN_ATTENTION,
+        
+        # 次元設定（既存設定から継承）
+        'qformer_hidden_size': 768,  # Q-Former隠れ層
+        'llama_hidden_size': LLAMA_HIDDEN_SIZE,  # 5120
+        'sam_prompt_dim': SAM_PROMPT_EMBED_DIM,  # 256
+        
+        # 将来の拡張
+        'use_partial_unified_space': USE_PARTIAL_UNIFIED_SPACE,
+        'use_dynamic_sam_control': USE_DYNAMIC_SAM_CONTROL,
+        
+        # 期待性能向上
+        'expected_improvement_phase1': 5.0,  # Phase 1: 5-8%
+        'expected_improvement_phase2': 10.0,  # Phase 2: 10-12%
+        'expected_improvement_phase3': 15.0,  # Phase 3: 15-20%
+    }
+
+# ==============================================================================
 # 🔄 SAM2+MLE論文準拠統一設定
 # ==============================================================================
 def get_mle_config() -> Dict[str, Any]:
