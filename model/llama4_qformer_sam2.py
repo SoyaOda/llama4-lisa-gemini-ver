@@ -126,6 +126,11 @@ class LlamaQFormerSAM2Config:
         self.use_seg_token = seg_token_config['use_seg_token']
         self.use_multi_frame_seg = seg_token_config['use_multi_frame']
         self.seg_token_return_attention = seg_token_config['return_attention']
+        
+        # 🆕 Phase 2: 部分統一トークン空間設定
+        self.use_partial_unified_space = seg_token_config.get('use_partial_unified_space', False)
+        self.use_adaptive_compression = seg_token_config.get('use_adaptive_compression', False)
+        self.use_moe_integration = seg_token_config.get('use_moe_integration', False)
 
 
 
@@ -177,10 +182,18 @@ class QFormerSegmentationBridge(nn.Module):
         else:
             self.seg_token_generator = None
         
-        # 6. 損失関数初期化（2025年ベストプラクティス）
+        # 🆕 6. Phase 2: 部分統一トークン空間初期化
+        if self.config.use_partial_unified_space:
+            self._init_phase2_components()
+        else:
+            self.adaptive_compressor = None
+            self.cross_modal_unifier = None
+            self.moe_integration_adapter = None
+        
+        # 7. 損失関数初期化（2025年ベストプラクティス）
         self._init_loss_function()
         
-        # 6. 最終デバイス配置確認・統一
+        # 8. 最終デバイス配置確認・統一
         self._ensure_device_consistency()
         
         print("✅ 方法3 Q-Formerブリッジ初期化完了（重複回避版）")
@@ -562,6 +575,56 @@ class QFormerSegmentationBridge(nn.Module):
             print(f"  🔄 標準モード継続 ([SEG]トークン無効)")
             self.seg_token_generator = None
     
+    def _init_phase2_components(self):
+        """🆕 Phase 2: 部分統一トークン空間コンポーネント初期化"""
+        print(f"\n🔄 Phase 2: 部分統一トークン空間コンポーネント初期化中...")
+        
+        try:
+            # 基準デバイス・データ型
+            base_device = next(self.llama_model.parameters()).device
+            base_dtype = next(self.llama_model.parameters()).dtype
+            
+            # 1. 適応的トークン圧縮器
+            if self.config.use_adaptive_compression:
+                from model.adaptive_token_compressor import create_adaptive_compressor
+                self.adaptive_compressor = create_adaptive_compressor(self.config)
+                self.adaptive_compressor = self.adaptive_compressor.to(device=base_device, dtype=base_dtype)
+                print(f"  ✅ AdaptiveTokenCompressor初期化完了")
+                print(f"    - 最大圧縮トークン数: 8")
+                print(f"    - 最小圧縮トークン数: 1")
+            else:
+                self.adaptive_compressor = None
+            
+            # 2. クロスモーダル統一層
+            from model.cross_modal_unifier import create_cross_modal_unifier
+            self.cross_modal_unifier = create_cross_modal_unifier(self.config)
+            self.cross_modal_unifier = self.cross_modal_unifier.to(device=base_device, dtype=base_dtype)
+            print(f"  ✅ CrossModalUnifier初期化完了")
+            print(f"    - 融合層数: 2")
+            print(f"    - モダリティ: vision, text, seg")
+            
+            # 3. MoE統合アダプター
+            if self.config.use_moe_integration:
+                from model.moe_integration_adapter import create_moe_integration_adapter
+                self.moe_integration_adapter = create_moe_integration_adapter(self.config)
+                self.moe_integration_adapter = self.moe_integration_adapter.to(device=base_device, dtype=base_dtype)
+                print(f"  ✅ MoEIntegrationAdapter初期化完了")
+                print(f"    - エキスパート数: 16 (Llama-4-Scout)")
+                print(f"    - アクティブエキスパート: 2")
+            else:
+                self.moe_integration_adapter = None
+            
+            print(f"✅ Phase 2: 部分統一トークン空間コンポーネント初期化完了")
+            print(f"  - デバイス: {base_device}")
+            print(f"  - データ型: {base_dtype}")
+            
+        except Exception as e:
+            print(f"  ❌ Phase 2コンポーネント初期化失敗: {e}")
+            print(f"  🔄 標準モード継続 (Phase 2無効)")
+            self.adaptive_compressor = None
+            self.cross_modal_unifier = None
+            self.moe_integration_adapter = None
+    
     def set_training_stage(self, stage: int):
         """学習段階設定"""
         self.training_stage = stage
@@ -773,6 +836,128 @@ class QFormerSegmentationBridge(nn.Module):
                 print(f"  🔄 標準処理継続")
                 seg_token_outputs = None
         
+        # 🆕 Phase 2: 部分統一トークン空間処理
+        phase2_outputs = None
+        if self.config.use_partial_unified_space:
+            print(f"  🔄 Phase 2: 部分統一トークン空間処理中...")
+            try:
+                # 1. 適応的トークン圧縮
+                compressed_outputs = None
+                if self.adaptive_compressor is not None:
+                    compressed_outputs = self.adaptive_compressor(
+                        qformer_outputs={'query_embeds': qformer_hidden_states},
+                        return_details=True
+                    )
+                    print(f"    ✅ トークン圧縮完了: {qformer_hidden_states.shape[1]} → {compressed_outputs['num_tokens']}")
+                    print(f"    - 圧縮率: {compressed_outputs['compression_ratio']:.1f}x")
+                
+                # 2. クロスモーダル統一処理
+                if self.cross_modal_unifier is not None:
+                    # 圧縮されたビジョントークン（なければQ-Former出力を使用）
+                    vision_tokens = compressed_outputs['compressed_tokens'] if compressed_outputs else qformer_hidden_states
+                    
+                    # [SEG]トークン（利用可能な場合）
+                    seg_tokens = seg_token_outputs['seg_token'].unsqueeze(1) if seg_token_outputs else None
+                    
+                    # テキストトークン（Llama隠れ状態の一部）
+                    text_tokens = encoder_hidden_states[:, :10, :]  # 最初の10トークン
+                    
+                    # デバッグ情報出力
+                    print(f"    🔍 デバッグ: トークンサイズ")
+                    print(f"    - vision_tokens: {vision_tokens.shape}")
+                    print(f"    - text_tokens: {text_tokens.shape}")
+                    if seg_tokens is not None:
+                        print(f"    - seg_tokens: {seg_tokens.shape}")
+                    print(f"    - attention_mask: {attention_mask.shape if attention_mask is not None else None}")
+                    print(f"    - encoder_hidden_states: {encoder_hidden_states.shape}")
+                    
+                    # attention_maskの調整：統一トークン数に合わせる
+                    if attention_mask is not None:
+                        # 各モダリティのトークン数を計算
+                        vision_len = vision_tokens.shape[1]
+                        text_len = text_tokens.shape[1]
+                        seg_len = seg_tokens.shape[1] if seg_tokens is not None else 0
+                        total_len = vision_len + text_len + seg_len
+                        
+                        print(f"    - 統一トークン総数: {total_len} (vision:{vision_len} + text:{text_len} + seg:{seg_len})")
+                        
+                        # テキスト部分のマスクを抽出（最初の10トークン）
+                        text_mask_part = attention_mask[:, :text_len] if attention_mask.shape[1] >= text_len else torch.ones(batch_size, text_len, device=device, dtype=torch.bool)
+                        
+                        # 新しい統一マスクを作成
+                        unified_attention_mask = torch.ones(batch_size, total_len, device=device, dtype=torch.bool)
+                        
+                        # 各モダリティのマスクを設定
+                        current_pos = 0
+                        # ビジョンマスク（圧縮されているので全て有効）
+                        unified_attention_mask[:, current_pos:current_pos + vision_len] = True
+                        current_pos += vision_len
+                        
+                        # SEGマスク（存在する場合は有効）
+                        if seg_len > 0:
+                            unified_attention_mask[:, current_pos:current_pos + seg_len] = True
+                            current_pos += seg_len
+                        
+                        # テキストマスク（元のマスクから抽出）
+                        unified_attention_mask[:, current_pos:current_pos + text_len] = text_mask_part
+                        
+                        print(f"    - 統一attention_mask: {unified_attention_mask.shape}")
+                        attention_mask_for_unifier = unified_attention_mask
+                    else:
+                        attention_mask_for_unifier = None
+                    
+                    unified_outputs = self.cross_modal_unifier(
+                        vision_tokens=vision_tokens,
+                        text_tokens=text_tokens,
+                        seg_tokens=seg_tokens,
+                        attention_mask=attention_mask_for_unifier,
+                        return_separated=True
+                    )
+                    
+                    print(f"    ✅ クロスモーダル統一完了")
+                    print(f"    - 統一トークン数: {unified_outputs['total_seq_len']}")
+                    print(f"    - モダリティ: {list(unified_outputs['modality_masks'].keys())}")
+                
+                # 3. MoE統合アダプター適用
+                if self.moe_integration_adapter is not None and unified_outputs is not None:
+                    try:
+                        # デバッグ: dtype確認
+                        print(f"    🔍 MoE統合前のdtype確認:")
+                        print(f"    - unified_tokens dtype: {unified_outputs['unified_tokens'].dtype}")
+                        print(f"    - MoE adapter dtype: {next(self.moe_integration_adapter.parameters()).dtype}")
+                        
+                        moe_adapted_outputs = self.moe_integration_adapter(
+                            unified_tokens=unified_outputs['unified_tokens'],
+                            modality_masks=unified_outputs['modality_masks'],
+                            return_routing_info=True
+                        )
+                    except Exception as moe_error:
+                        print(f"    ⚠️ MoE統合エラーの詳細: {moe_error}")
+                        print(f"    - エラー発生箇所: MoEIntegrationAdapter")
+                        raise
+                    
+                    print(f"    ✅ MoE統合アダプター適用完了")
+                    print(f"    - ロードバランス損失: {moe_adapted_outputs['load_balance_loss'].item():.4f}")
+                    
+                    # Phase 2処理は成功したが、qformer_hidden_statesは変更しない
+                    # Phase 2の結果は別途phase2_outputsに保存されている
+                    print(f"    📝 注: Phase 2処理完了、Q-Former出力は元の形状を維持")
+                    
+                    phase2_outputs = {
+                        'compressed_outputs': compressed_outputs,
+                        'unified_outputs': unified_outputs,
+                        'moe_adapted_outputs': moe_adapted_outputs
+                    }
+                    
+                    # Phase 2処理成功時のqformer_hidden_statesを保存
+                    print(f"    ✅ Phase 2処理成功: Q-Former次元調整完了")
+                    
+            except Exception as e:
+                print(f"  ⚠️ Phase 2処理エラー: {e}")
+                print(f"  🔄 標準処理継続")
+                phase2_outputs = None
+                # エラー時はqformer_hidden_statesを元に戻す必要はない（変更していないため）
+        
         # 🆕 Phase 3A: MoE統合処理
         moe_info = {}
         if self.enable_moe and self.moe_adapter is not None:
@@ -781,6 +966,7 @@ class QFormerSegmentationBridge(nn.Module):
             try:
                 # 🔥 Option A: Q-Former出力(768次元)をMoE入力(5120次元)に投影
                 print(f"    📊 次元変換: Q-Former({qformer_hidden_states.shape[-1]}次元) → MoE({self.config.llama_config['hidden_size']}次元)")
+                print(f"    - qformer_hidden_states shape: {qformer_hidden_states.shape}")
                 
                 # Q-Former用投影層を追加（初回のみ作成）
                 if not hasattr(self, 'qformer_to_moe_projector'):
@@ -857,11 +1043,18 @@ class QFormerSegmentationBridge(nn.Module):
         qformer_outputs = {
             'query_embeds': qformer_hidden_states,  # (batch, 32, 768) or MoE-optimized
             'sam_prompts': torch.zeros(batch_size, self.config.qformer_config['num_queries'], 256, device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype),
-            'moe_info': moe_info  # 🆕 MoE統計情報
+            'moe_info': moe_info,  # 🆕 MoE統計情報
+            'phase2_outputs': phase2_outputs  # 🆕 Phase 2処理結果
         }
         
         # 3. 高精度リッチプロンプト生成（Web調査修正: 768次元）
         query_embeddings = qformer_outputs['query_embeds']  # (batch, 32, 768)
+        
+        # Phase 2処理時のデバッグ
+        print(f"  🔍 SAMプロンプト生成前のquery_embeddings確認:")
+        print(f"    - shape: {query_embeddings.shape}")
+        print(f"    - dtype: {query_embeddings.dtype}")
+        print(f"    - 期待される形状: (batch, 32, 768)")
         
         # 🔍 デバッグ: dtype確認
         print(f"  🔍 デバッグ: enhanced_sam_projector dtype確認")

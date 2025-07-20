@@ -301,8 +301,10 @@ USE_MULTI_FRAME_SEG = False  # 動画処理用の拡張版を使用するか
 SEG_TOKEN_RETURN_ATTENTION = False  # 注意重みを返すか（デバッグ用）
 
 # 統一トークン空間設定（将来の拡張用）
-USE_PARTIAL_UNIFIED_SPACE = False  # Phase 2: 部分的統一トークン空間
+USE_PARTIAL_UNIFIED_SPACE = True  # Phase 2: 部分的統一トークン空間（有効化）
 USE_DYNAMIC_SAM_CONTROL = False  # Phase 3: 動的SAM2制御
+USE_ADAPTIVE_TOKEN_COMPRESSION = True  # Phase 2: 適応的トークン圧縮
+USE_MOE_INTEGRATION = True  # Phase 2: MoE統合アダプター
 
 def get_seg_token_config() -> Dict[str, Any]:
     """
@@ -325,6 +327,8 @@ def get_seg_token_config() -> Dict[str, Any]:
         # 将来の拡張
         'use_partial_unified_space': USE_PARTIAL_UNIFIED_SPACE,
         'use_dynamic_sam_control': USE_DYNAMIC_SAM_CONTROL,
+        'use_adaptive_compression': USE_ADAPTIVE_TOKEN_COMPRESSION,
+        'use_moe_integration': USE_MOE_INTEGRATION,
         
         # 期待性能向上
         'expected_improvement_phase1': 5.0,  # Phase 1: 5-8%
