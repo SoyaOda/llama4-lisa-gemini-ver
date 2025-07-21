@@ -341,7 +341,9 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
         sam_output_dim: int = 256,
         fusion_strategy: str = "learned_weighted",
         consistency_weight: float = 0.1,
-        debug_mode: bool = True
+        debug_mode: bool = True,
+        sam2_model_id: str = "facebook/sam2-hiera-large",  # 🆕 SAM2モデルID
+        existing_sam2=None  # 🆕 既存SAM2インスタンス
     ):
         super().__init__()
         
@@ -354,12 +356,16 @@ class Llama4SAM2DualPathwayDecoder(nn.Module):
         print(f"  - SAM2出力次元: {sam_output_dim}")
         print(f"  - 融合戦略: {fusion_strategy}")
         
-        # 1. SAM2メインデコーダ (実際のSAM2ロード)
-        if SAM2_AVAILABLE:
+        # 1. SAM2メインデコーダ (既存インスタンス優先使用)
+        if existing_sam2 is not None:
+            self.main_sam2_decoder = existing_sam2
+            print(f"  ✅ SAM2メインデコーダ: 既存インスタンス再利用（重複ロード回避）")
+        elif SAM2_AVAILABLE:
             try:
                 from model.sam2_integration import get_sam2_wrapper
-                self.main_sam2_decoder = get_sam2_wrapper()
-                print(f"  ✅ SAM2メインデコーダ: 実際のSAM2ロード完了")
+                # SAM2モデルIDを渡してロード
+                self.main_sam2_decoder = get_sam2_wrapper(model_id=sam2_model_id)
+                print(f"  ✅ SAM2メインデコーダ: {sam2_model_id}ロード完了")
             except Exception as e:
                 print(f"  ⚠️ SAM2ロード失敗: {e}, モック使用")
                 self.main_sam2_decoder = None
@@ -539,7 +545,9 @@ def create_dual_pathway_decoder(
     llama_hidden_size: int = 5120,
     sam_output_dim: int = 256,
     fusion_strategy: str = "learned_weighted",
-    force_gpu: bool = False
+    force_gpu: bool = False,
+    sam2_model_id: str = "facebook/sam2-hiera-large",  # 🆕 SAM2モデルID
+    existing_sam2=None  # 🆕 既存SAM2インスタンス
 ) -> Llama4SAM2DualPathwayDecoder:
     """
     デュアルパスウェイデコーダファクトリ関数
@@ -548,6 +556,8 @@ def create_dual_pathway_decoder(
         llama_hidden_size: Llama-4隠れ層サイズ
         sam_output_dim: SAM2出力次元
         fusion_strategy: 融合戦略
+        sam2_model_id: SAM2モデルID（HuggingFace Hub or ローカルパス）
+        existing_sam2: 既存SAM2インスタンス（重複ロード回避用）
         
     Returns:
         Llama4SAM2DualPathwayDecoder instance
@@ -561,10 +571,18 @@ def create_dual_pathway_decoder(
             raise RuntimeError("訓練スクリプトにはGPU環境が必須です。CUDA利用不可。")
         print("✅ GPU環境確認完了（訓練スクリプト対応）")
     
+    # 🔥 既存SAM2インスタンス確認・活用
+    if existing_sam2 is not None:
+        print("✅ 既存SAM2インスタンス再利用（重複ロード回避）")
+    else:
+        print(f"🌐 SAM2モデル使用: {sam2_model_id}")
+    
     decoder = Llama4SAM2DualPathwayDecoder(
         llama_hidden_size=llama_hidden_size,
         sam_output_dim=sam_output_dim,
-        fusion_strategy=fusion_strategy
+        fusion_strategy=fusion_strategy,
+        sam2_model_id=sam2_model_id,      # 🆕 SAM2モデルID渡し
+        existing_sam2=existing_sam2       # 🆕 既存インスタンス渡し
     )
     
     print(f"✅ デュアルパスウェイデコーダ作成完了")
