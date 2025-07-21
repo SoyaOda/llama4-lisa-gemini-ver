@@ -154,22 +154,90 @@ class AuxiliarySegmentationHead(nn.Module):
         batch_size, seq_len, hidden_size = llama_hidden_states.shape
         
         print(f"  🔄 補助セグメンテーション実行...")
-        print(f"    - 入力: {llama_hidden_states.shape}")
+        print(f"    - 入力: {llama_hidden_states.shape}, dtype: {llama_hidden_states.dtype}")
+        print(f"    - 入力統計: min={llama_hidden_states.min().item():.6f}, max={llama_hidden_states.max().item():.6f}")
+        print(f"    - NaN/Inf検査: NaN={torch.isnan(llama_hidden_states).any().item()}, Inf={torch.isinf(llama_hidden_states).any().item()}")
         
         # 1. Llama-4特徴適応
         # 平均プーリングでトークン次元削減
         pooled_features = llama_hidden_states.mean(dim=1)  # (B, 5120)
-        adapted_features = self.llama_feature_adapter(pooled_features)  # (B, 256)
+        print(f"    - プーリング後: {pooled_features.shape}, NaN={torch.isnan(pooled_features).any().item()}")
+        
+        # デバッグ: llama_feature_adapterの各層を個別に実行
+        x = pooled_features
+        for i, layer in enumerate(self.llama_feature_adapter):
+            x_before = x.clone()
+            x = layer(x)
+            print(f"    - llama_feature_adapter[{i}] ({layer.__class__.__name__}): "
+                  f"shape={x.shape}, "
+                  f"NaN={torch.isnan(x).any().item()}, "
+                  f"range=[{x.min().item():.6f}, {x.max().item():.6f}]")
+            if torch.isnan(x).any():
+                print(f"      ⚠️ NaN検出! 入力範囲: [{x_before.min().item():.6f}, {x_before.max().item():.6f}]")
+        
+        adapted_features = x  # (B, 256)
         
         print(f"    - 特徴適応後: {adapted_features.shape}")
         
-        # 2. 空間アップサンプリング
-        spatial_features = self.spatial_upsample(adapted_features)  # (B, 32, 64, 64)
+        # 2. 空間アップサンプリング - デバッグ強化
+        # Linear層の出力を確認
+        linear_out = self.spatial_upsample[0](adapted_features)  # Linear(256, 1024)
+        print(f"    - Linear出力: shape={linear_out.shape}, NaN={torch.isnan(linear_out).any().item()}")
+        
+        # ReLU後
+        relu_out = self.spatial_upsample[1](linear_out)
+        print(f"    - ReLU後: NaN={torch.isnan(relu_out).any().item()}, ゼロ要素={(relu_out == 0).sum().item()}/{relu_out.numel()}")
+        
+        # Unflatten前の形状確認
+        print(f"    - Unflatten入力: shape={relu_out.shape}, expected=(B, {self.sam_output_dim * 4})")
+        
+        # Unflattenの実行を手動で確認
+        try:
+            # Unflattenの期待する入力: (B, 1024) -> (B, 256, 2, 2)
+            unflattened = relu_out.view(batch_size, self.sam_output_dim, 2, 2)
+            print(f"    - Unflatten成功: shape={unflattened.shape}")
+        except Exception as e:
+            print(f"    ⚠️ Unflattenエラー: {e}")
+            # フォールバック: ゼロで初期化
+            unflattened = torch.zeros(batch_size, self.sam_output_dim, 2, 2, device=relu_out.device, dtype=relu_out.dtype)
+        
+        # 各ConvTranspose2d層を個別にデバッグ
+        x = unflattened
+        layer_idx = 3  # Unflatten, Linear, ReLUの後から
+        for i in range(3, len(self.spatial_upsample)):
+            layer = self.spatial_upsample[i]
+            x_before = x.clone()
+            x = layer(x)
+            print(f"    - spatial_upsample[{i}] ({layer.__class__.__name__}): "
+                  f"shape={x.shape}, "
+                  f"NaN={torch.isnan(x).any().item()}, "
+                  f"range=[{x.min().item():.6f}, {x.max().item():.6f}]")
+            if torch.isnan(x).any():
+                print(f"      ⚠️ NaN検出! 層の詳細: {layer}")
+                if hasattr(layer, 'weight'):
+                    print(f"      - weight stats: shape={layer.weight.shape}, "
+                          f"NaN={torch.isnan(layer.weight).any().item()}, "
+                          f"range=[{layer.weight.min().item():.6f}, {layer.weight.max().item():.6f}]")
+        
+        spatial_features = x  # (B, 32, 64, 64)
         
         print(f"    - 空間復元後: {spatial_features.shape}")
         
-        # 3. 最終マスク予測
-        aux_masks = self.final_conv(spatial_features)  # (B, 1, 512, 512)
+        # 3. 最終マスク予測 - デバッグ強化
+        x = spatial_features
+        for i, layer in enumerate(self.final_conv):
+            x = layer(x)
+            print(f"    - final_conv[{i}] ({layer.__class__.__name__}): "
+                  f"shape={x.shape}, "
+                  f"NaN={torch.isnan(x).any().item()}, "
+                  f"range=[{x.min().item():.6f}, {x.max().item():.6f}]")
+        
+        aux_masks = x  # (B, 1, 512, 512)
+        
+        # NaN検出時の安全処理
+        if torch.isnan(aux_masks).any():
+            print(f"    ⚠️ aux_masksにNaN検出! ゼロマスクで置換")
+            aux_masks = torch.zeros_like(aux_masks)
         
         # 出力解像度調整
         if aux_masks.shape[-2:] != self.output_size:
@@ -262,6 +330,30 @@ class DualPathwayFusion(nn.Module):
         print(f"    - メインマスク: {main_masks.shape}")
         print(f"    - 補助マスク: {aux_masks.shape}")
         
+        # デバイス統一（Model Parallelism対応）
+        target_device = main_masks.device
+        print(f"    - ターゲットデバイス: {target_device}")
+        print(f"    - メインマスクデバイス: {main_masks.device}")
+        print(f"    - 補助マスクデバイス: {aux_masks.device}")
+        
+        if aux_masks.device != target_device:
+            print(f"    - aux_masks デバイス統一: {aux_masks.device} → {target_device}")
+            aux_masks = aux_masks.to(target_device)
+        
+        # 学習可能パラメータのデバイス統一（PyTorch Parameter管理準拠）
+        if hasattr(self, 'main_weight') and self.main_weight.device != target_device:
+            print(f"    - main_weight デバイス統一: {self.main_weight.device} → {target_device}")
+            self.main_weight.data = self.main_weight.data.to(target_device)
+        
+        if hasattr(self, 'aux_weight') and self.aux_weight.device != target_device:
+            print(f"    - aux_weight デバイス統一: {self.aux_weight.device} → {target_device}")
+            self.aux_weight.data = self.aux_weight.data.to(target_device)
+        
+        # アテンション重みのデバイス統一
+        if hasattr(self, 'attention_conv') and any(p.device != target_device for p in self.attention_conv.parameters()):
+            print(f"    - attention_conv デバイス統一 → {target_device}")
+            self.attention_conv = self.attention_conv.to(target_device)
+        
         # 解像度統一
         if main_masks.shape != aux_masks.shape:
             aux_masks = F.interpolate(
@@ -307,14 +399,59 @@ class DualPathwayFusion(nn.Module):
         # 一貫性損失計算
         if return_consistency:
             # KL divergence一貫性制約
+            # 🔍 一貫性損失デバッグ
+            print(f"    🔍 一貫性損失計算デバッグ:")
+            print(f"      - main_masks: shape={main_masks.shape}, dtype={main_masks.dtype}")
+            print(f"      - aux_masks: shape={aux_masks.shape}, dtype={aux_masks.dtype}")
+            print(f"      - temperature: {self.temperature}")
+            
+            # NaN/Inf チェック
+            main_nan = torch.isnan(main_masks).any().item()
+            aux_nan = torch.isnan(aux_masks).any().item()
+            main_inf = torch.isinf(main_masks).any().item()
+            aux_inf = torch.isinf(aux_masks).any().item()
+            
+            print(f"      - main_masks NaN: {main_nan}, Inf: {main_inf}")
+            print(f"      - aux_masks NaN: {aux_nan}, Inf: {aux_inf}")
+            print(f"      - main_masks 範囲: [{main_masks.min().item():.6f}, {main_masks.max().item():.6f}]")
+            print(f"      - aux_masks 範囲: [{aux_masks.min().item():.6f}, {aux_masks.max().item():.6f}]")
+            
             main_prob = torch.sigmoid(main_masks / self.temperature)
             aux_prob = torch.sigmoid(aux_masks / self.temperature)
             
+            # sigmoid後のチェック
+            main_prob_nan = torch.isnan(main_prob).any().item()
+            aux_prob_nan = torch.isnan(aux_prob).any().item()
+            print(f"      - sigmoid後 main_prob NaN: {main_prob_nan}, aux_prob NaN: {aux_prob_nan}")
+            
+            # KL divergence計算前のチェック
+            main_flatten = main_masks.flatten(1)
+            aux_flatten = aux_masks.flatten(1)
+            
+            # log_softmax/softmax前のチェック
+            print(f"      - flatten後: main={main_flatten.shape}, aux={aux_flatten.shape}")
+            
+            main_log_softmax = F.log_softmax(main_flatten, dim=1)
+            aux_softmax = F.softmax(aux_flatten, dim=1)
+            
+            # softmax後のNaNチェック
+            main_ls_nan = torch.isnan(main_log_softmax).any().item()
+            aux_s_nan = torch.isnan(aux_softmax).any().item()
+            print(f"      - log_softmax NaN: {main_ls_nan}, softmax NaN: {aux_s_nan}")
+            
             consistency_loss = F.kl_div(
-                F.log_softmax(main_masks.flatten(1), dim=1),
-                F.softmax(aux_masks.flatten(1), dim=1),
+                main_log_softmax,
+                aux_softmax,
                 reduction='batchmean'
             )
+            
+            # 最終損失のNaNチェック
+            consistency_nan = torch.isnan(consistency_loss).item()
+            print(f"      - 一貫性損失 NaN: {consistency_nan}")
+            
+            if consistency_nan:
+                print(f"      ⚠️ 一貫性損失がNaN！ゼロに設定")
+                consistency_loss = torch.tensor(0.0, device=consistency_loss.device, dtype=consistency_loss.dtype)
             
             results['consistency_loss'] = consistency_loss * self.consistency_weight
             

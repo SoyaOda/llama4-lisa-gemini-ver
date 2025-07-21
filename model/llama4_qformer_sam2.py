@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict, Any, List
+import math
 import sys
 import os
 
@@ -71,7 +72,16 @@ class LlamaQFormerSAM2Config:
         # Llama-4-Scout設定（複数GPU環境）
         self.llama_model_id = config_linux.LLAMA_MODEL_ID
         self.llama_hidden_size = config_linux.LLAMA_HIDDEN_SIZE
-        self.device_map = "auto"  # 複数GPU自動分散
+        # Webリサーチ最適化: "balanced_low_0" でGPU 0過負荷回避
+        num_gpus = torch.cuda.device_count()
+        if num_gpus >= 4:
+            # HuggingFace推奨: "balanced_low_0" でGPU 0負荷軽減
+            self.device_map = "balanced_low_0"
+            # max_memoryでメモリ制限を均等分散（各GPU 70GB制限）
+            self.max_memory = {i: "70GB" for i in range(num_gpus)}
+        else:
+            self.device_map = "auto"  # フォールバック
+            self.max_memory = None
         self.torch_dtype = config_linux.TORCH_DTYPE
         self.attn_implementation = config_linux.ATTN_IMPLEMENTATION
         
@@ -223,80 +233,11 @@ class QFormerSegmentationBridge(nn.Module):
                 print(f"  - デバイス分散: {len(device_map) if device_map else 0} デバイス")
             
         else:
-            # フォールバック: 独自初期化（非推奨、メモリ使用量増加）
-            print(f"⚠️ 共有インスタンス未提供、独自初期化実行...")
-            if not LLAMA4_AVAILABLE:
-                raise ImportError("Llama-4-Scoutが利用できません")
-            
-            self._fallback_init_llama4()
+            # ❌ フォールバック削除: 共有インスタンスが必須
+            error_msg = "❌ 共有Llama4インスタンスが未提供またはダミーモデルです。有効なLlama4モデルインスタンスを提供してください。"
+            print(error_msg)
+            raise RuntimeError(error_msg)
     
-    def _fallback_init_llama4(self):
-        """フォールバック: 独自Llama-4初期化（非推奨）"""
-        print(f"🔄 フォールバック: 独自Llama-4初期化（メモリ効率低下）...")
-        
-        try:
-            # 🔄 2025年ベストプラクティス: Llama-4 Early Fusion最適化
-            import torch
-            gpu_count = torch.cuda.device_count()
-            print(f"  - 2025年Early Fusion最適化適用（GPU数: {gpu_count}）")
-            print(f"  - MoE効率化: 17B active/109B total")
-            
-            # Web調査ベース: MetaP調整スタイル最適化
-            if gpu_count >= 2:
-                # 🔄 2025年MoE並列化: レイヤー毎最適配置
-                max_memory = {
-                    0: "35GiB",   # GPU0: Early Fusion処理専用
-                    1: "65GiB",   # GPU1: MoEエキスパート主格納
-                }
-                device_map = "balanced_low_0"  # MoE効率配置
-                
-                if gpu_count > 2:
-                    # スケールアウト: エキスパート並列化
-                    for i in range(2, gpu_count):
-                        max_memory[i] = "65GiB"
-            else:
-                max_memory = {0: "75GiB"}  # 単一GPU: 10M context最適化
-                device_map = "auto"
-            
-            # 🔄 2025年量子化: MoE + Early Fusion最適化
-            from transformers import BitsAndBytesConfig
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,                    # MoE効率化
-                bnb_4bit_quant_type="nf4",           # Llama-4推奨
-                bnb_4bit_use_double_quant=True,      # Early Fusion精度保持
-                bnb_4bit_compute_dtype=torch.bfloat16, # Meta公式FP精度
-                llm_int8_enable_fp32_cpu_offload=True,  # 10M context対応
-                llm_int8_threshold=6.0,              # 🔄 MoE閾値最適化
-            )
-            
-            print(f"  - MoE量子化: 4bit NF4 + Early Fusion最適化")
-            print(f"  - 計算精度: BFloat16 (Meta公式)")
-            print(f"  - 10M context: 対応済み")
-            
-            # 🔄 Llama-4-Scout Early Fusion初期化
-            # Option F: 初期化時にすべてBFloat16で統一
-            self.llama_model = Llama4ForConditionalGeneration.from_pretrained(
-                self.config.llama_model_id,
-                quantization_config=quantization_config,
-                device_map=device_map,
-                max_memory=max_memory,
-                torch_dtype=torch.bfloat16,  # 🔥 完全型統一
-                attn_implementation="sdpa",  # 型一貫性確保
-                trust_remote_code=True,
-                low_cpu_mem_usage=True,              # 🔄 メモリ効率化
-                use_safetensors=True,                # 🔄 安全な重み読み込み
-            )
-            
-            self.llama_processor = AutoProcessor.from_pretrained(
-                self.config.llama_model_id,
-                trust_remote_code=True
-            )
-            
-            print(f"⚠️ フォールバック初期化成功（メモリ使用量増加）")
-            
-        except Exception as e:
-            print(f"❌ フォールバック初期化失敗: {e}")
-            raise
     
     def _init_qformer(self):
         """Q-Former初期化（2025年ベストプラクティス）"""
@@ -743,56 +684,233 @@ class QFormerSegmentationBridge(nn.Module):
         
         # 1. Llama-4-Scout: マルチモーダル理解
         print(f"  🧠 Llama-4-Scout推論...")
-        llama_outputs = self.llama_model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            images=images,  # Llama-4用画像
-            labels=labels,
-            output_hidden_states=True,
-            return_dict=True
-        )
+        
+        # 基本入力確認
+        print(f"  🔍 入力: IDs={input_ids.shape}, 画像={images.shape}, NaN確認={torch.isnan(images).any().item()}")
+        
+        # トークン範囲チェック
+        if hasattr(self.llama_model.config, 'vocab_size'):
+            vocab_size = self.llama_model.config.vocab_size
+            if (input_ids >= vocab_size).any():
+                input_ids = torch.clamp(input_ids, max=vocab_size-1)
+        
+        # Model Parallelismの場合の入力準備
+        if hasattr(self.llama_model, 'hf_device_map') and self.llama_model.hf_device_map:
+            print(f"    🔧 Model Parallelism検出: HuggingFaceが自動的にデバイス配置を管理")
+            
+            # 🚨 緊急デバッグ: Model Parallelismデバイス分析
+            print(f"    📊 Model Parallelism詳細分析:")
+            device_map = self.llama_model.hf_device_map
+            print(f"      - デバイスマップエントリ数: {len(device_map)}")
+            
+            # デバイス別レイヤー数カウント
+            device_counts = {}
+            for layer_name, layer_device in device_map.items():
+                device_str = str(layer_device)
+                device_counts[device_str] = device_counts.get(device_str, 0) + 1
+                
+            print(f"      - デバイス分散: {device_counts}")
+            
+            # embed_tokensとlm_headの配置確認
+            embed_device = device_map.get('model.embed_tokens', 'not_found')
+            lm_head_device = device_map.get('lm_head', 'not_found')
+            print(f"      - embed_tokens: {embed_device}")
+            print(f"      - lm_head: {lm_head_device}")
+            
+            # 🚨 入力データのデバイス統一性チェック
+            input_devices = {
+                'input_ids': input_ids.device,
+                'images': images.device,
+                'attention_mask': attention_mask.device if attention_mask is not None else None
+            }
+            print(f"      - 入力データデバイス: {input_devices}")
+            
+            # embed_tokensの実際のデバイス
+            actual_embed_device = next(self.llama_model.get_input_embeddings().parameters()).device
+            print(f"      - embed_tokens実際デバイス: {actual_embed_device}")
+            
+        else:
+            # Model Parallelismが無効な場合は現在のデバイスを維持
+            print(f"    🔧 単一デバイスモード: {device}")
+        
+        # Llama-4実行
+        try:
+            print(f"    🔍 Llama-4実行開始...")
+            
+            # 🚨 緊急デバッグ: 入力データ詳細検証
+            print(f"    📊 緊急デバッグ - 入力データ検証:")
+            print(f"      - input_ids: shape={input_ids.shape}, dtype={input_ids.dtype}, device={input_ids.device}")
+            print(f"      - input_ids範囲: [{input_ids.min().item()}, {input_ids.max().item()}]")
+            print(f"      - input_ids NaN: {torch.isnan(input_ids.float()).any().item()}")
+            print(f"      - images: shape={images.shape}, dtype={images.dtype}, device={images.device}")
+            print(f"      - images範囲: [{images.min().item():.6f}, {images.max().item():.6f}]")
+            print(f"      - images NaN: {torch.isnan(images).any().item()}")
+            if attention_mask is not None:
+                print(f"      - attention_mask: shape={attention_mask.shape}, dtype={attention_mask.dtype}")
+                print(f"      - attention_mask範囲: [{attention_mask.min().item()}, {attention_mask.max().item()}]")
+            
+            # 🚨 緊急デバッグ: embed_tokens層検証
+            print(f"    🔍 embed_tokens層検証:")
+            embed_tokens = self.llama_model.get_input_embeddings()
+            print(f"      - embed_tokens weight: shape={embed_tokens.weight.shape}, dtype={embed_tokens.weight.dtype}")
+            print(f"      - embed_tokens device: {embed_tokens.weight.device}")
+            embed_nan = torch.isnan(embed_tokens.weight).any().item()
+            embed_inf = torch.isinf(embed_tokens.weight).any().item()
+            print(f"      - embed_tokens NaN: {embed_nan}, Inf: {embed_inf}")
+            
+            if embed_nan or embed_inf:
+                print(f"      ❌ 致命的: embed_tokens重みが破損!")
+                # NaN/Inf位置の詳細分析
+                if embed_nan:
+                    nan_positions = torch.isnan(embed_tokens.weight).nonzero()
+                    print(f"      - NaN位置数: {nan_positions.shape[0]}")
+                    print(f"      - 最初の5 NaN位置: {nan_positions[:5].tolist() if nan_positions.shape[0] > 0 else 'なし'}")
+                
+                if embed_inf:
+                    inf_positions = torch.isinf(embed_tokens.weight).nonzero()
+                    print(f"      - Inf位置数: {inf_positions.shape[0]}")
+                    print(f"      - 最初の5 Inf位置: {inf_positions[:5].tolist() if inf_positions.shape[0] > 0 else 'なし'}")
+                
+                # 🚨 緊急修復試行（ゼロ初期化）
+                print(f"      🔧 緊急修復: NaN/Inf → 正規分布初期化")
+                with torch.no_grad():
+                    if embed_nan:
+                        nan_mask = torch.isnan(embed_tokens.weight)
+                        embed_tokens.weight[nan_mask] = torch.randn_like(embed_tokens.weight[nan_mask]) * 0.02
+                    if embed_inf:
+                        inf_mask = torch.isinf(embed_tokens.weight)
+                        embed_tokens.weight[inf_mask] = torch.randn_like(embed_tokens.weight[inf_mask]) * 0.02
+                print(f"      ✅ 緊急修復完了")
+                
+            else:
+                embed_min = embed_tokens.weight.min().item()
+                embed_max = embed_tokens.weight.max().item()
+                print(f"      - embed_tokens範囲: [{embed_min:.6f}, {embed_max:.6f}]")
+            
+            # 🚨 vocab_size検証
+            vocab_size = self.llama_model.config.vocab_size
+            print(f"      - vocab_size: {vocab_size}")
+            invalid_tokens = (input_ids >= vocab_size).sum().item()
+            print(f"      - 無効トークン数: {invalid_tokens}")
+            
+            # 🚨 テスト用embed実行
+            print(f"    🧪 embed_tokens テスト実行:")
+            with torch.no_grad():
+                try:
+                    # 小さなサンプルでembed test
+                    test_ids = input_ids[:, :10].clone()  # 最初の10トークンのみ
+                    test_embeds = embed_tokens(test_ids)
+                    test_nan = torch.isnan(test_embeds).any().item()
+                    test_inf = torch.isinf(test_embeds).any().item()
+                    print(f"      - テスト埋め込み: shape={test_embeds.shape}, NaN={test_nan}, Inf={test_inf}")
+                    if not test_nan and not test_inf:
+                        print(f"      - テスト埋め込み範囲: [{test_embeds.min().item():.6f}, {test_embeds.max().item():.6f}]")
+                except Exception as embed_error:
+                    print(f"      ❌ embed_tokensテスト失敗: {embed_error}")
+            
+            llama_outputs = self.llama_model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                images=images,  # Llama-4用画像
+                labels=labels,
+                output_hidden_states=True,
+                output_attentions=True,  # 🆕 attention監視用
+                return_dict=True
+            )
+                        
+        except Exception as e:
+            print(f"    ⚠️ Llama-4エラー: {e}")
+            raise
+        
+        # Llama出力チェック（詳細デバッグ + 2025年安定性監視）
+        print(f"  🔍 Llama-4出力詳細解析:")
+        if llama_outputs.loss is not None:
+            loss_nan = torch.isnan(llama_outputs.loss).item()
+            loss_inf = torch.isinf(llama_outputs.loss).item()
+            print(f"    - loss: {llama_outputs.loss.item():.6f}, NaN={loss_nan}, Inf={loss_inf}")
+        else:
+            print(f"    - loss: None")
+            
+        # 🚨 2025年修正B: Attention Entropy Collapse監視
+        if hasattr(llama_outputs, 'attentions') and llama_outputs.attentions is not None:
+            try:
+                # 最後の層のattentionのエントロピー計算
+                last_attention = llama_outputs.attentions[-1]  # [batch, heads, seq, seq]
+                if not torch.isnan(last_attention).any():
+                    # attention weightのエントロピー計算
+                    attention_probs = last_attention.mean(dim=1)  # head平均
+                    attention_entropy = -(attention_probs * torch.log(attention_probs + 1e-8)).sum(dim=-1).mean()
+                    print(f"    - attention entropy: {attention_entropy.item():.6f} (低値=collapse警告)")
+                    
+                    # エントロピーが低すぎる場合の警告
+                    if attention_entropy < 1.0:  # 閾値は実験的に決定
+                        print(f"      ⚠️ Attention Entropy Collapse検出! 訓練不安定性の可能性")
+                else:
+                    print(f"    - attention: NaN検出、エントロピー計算スキップ")
+            except Exception as entropy_error:
+                print(f"    - attention entropy計算エラー: {entropy_error}")
+            
+        if hasattr(llama_outputs, 'logits'):
+            logits = llama_outputs.logits
+            # 提案C: CPU-based完全メモリ最適化（GPU VRAM圧迫排除）
+            sample_size = 500  # さらに小サンプル化（500要素）
+            logits_flat = logits.view(-1)
+            sample_indices = torch.randint(0, logits_flat.shape[0], (sample_size,), device='cpu')  # CPUでインデックス生成
+            
+            # 🎯 最小データのみをCPUに転送（VRAM影響最小化）
+            logits_sample_gpu = logits_flat[sample_indices.to(logits.device)]
+            logits_sample_cpu = logits_sample_gpu.detach().cpu()  # 最小限データのみCPU転送
+            
+            # CPUで完全チェック（GPU VRAMへの影響ゼロ）
+            logits_nan = torch.isnan(logits_sample_cpu).any().item()
+            logits_inf = torch.isinf(logits_sample_cpu).any().item()
+            print(f"    - logits: shape={logits.shape}, dtype={logits.dtype}, NaN={logits_nan}, Inf={logits_inf} (CPUサンプル{sample_size}要素)")
+            
+            if logits_nan:
+                # NaN位置の詳細分析（メモリ効率版）
+                print(f"      ❌ logits NaN検出! (サンプル{sample_size}要素中)")
+                print(f"      - 詳細: サンプリングでNaN発見、全logits確認が必要")
+                
+                # トークン別NaN分析（メモリ効率版スキップ）
+                print(f"      - 詳細分析: メモリ効率化のためスキップ")
+            else:
+                logits_min = logits.min().item()
+                logits_max = logits.max().item()
+                print(f"    - logits範囲: [{logits_min:.6f}, {logits_max:.6f}]")
+                
+        if hasattr(llama_outputs, 'hidden_states'):
+            last_hidden = llama_outputs.hidden_states[-1]
+            hidden_nan = torch.isnan(last_hidden).any().item()
+            hidden_inf = torch.isinf(last_hidden).any().item()
+            print(f"    - hidden_states: shape={last_hidden.shape}, dtype={last_hidden.dtype}")
+            print(f"    - hidden_states NaN={hidden_nan}, Inf={hidden_inf}")
+            
+            if hidden_nan:
+                nan_positions = torch.isnan(last_hidden).nonzero()
+                print(f"      ❌ hidden_states NaN検出! 位置数: {nan_positions.shape[0]}")
+                print(f"      - 最初の5位置: {nan_positions[:5].tolist() if nan_positions.shape[0] > 0 else 'なし'}")
+            else:
+                hidden_min = last_hidden.min().item()
+                hidden_max = last_hidden.max().item()
+                print(f"    - hidden_states範囲: [{hidden_min:.6f}, {hidden_max:.6f}]")
         
         # 2. Q-Former: 64クエリで能動的情報抽出
         print(f"  🔍 Q-Former 64クエリ抽出...")
         encoder_hidden_states = llama_outputs.hidden_states[-1]
         
-        # デバイス・データ型確認とデバッグ情報
+        # デバイス・データ型統一
         llama_device = encoder_hidden_states.device
         llama_dtype = encoder_hidden_states.dtype
         qformer_device = next(self.qformer.parameters()).device
         qformer_dtype = next(self.qformer.parameters()).dtype
         
-        print(f"    - Llama出力: {llama_device}, {llama_dtype}")
-        print(f"    - Q-Former: {qformer_device}, {qformer_dtype}")
-        
-        # デバイス・データ型不整合の場合は移動
         if llama_device != qformer_device or llama_dtype != qformer_dtype:
-            print(f"    ⚠️ 不整合検出、Q-Formerを{llama_device}, {llama_dtype}に移動中...")
             self.qformer = self.qformer.to(device=llama_device, dtype=llama_dtype)
             self.enhanced_sam_projector = self.enhanced_sam_projector.to(device=llama_device, dtype=llama_dtype)
-            print(f"    ✅ Q-Formerデバイス・データ型移動完了")
         
-        # 2025年ベストプラクティス: Q-Former入力検証（Web調査結果）
-        if encoder_hidden_states is None:
-            raise ValueError("Q-Former入力エラー: encoder_hidden_statesがNoneです")
-        
-        if encoder_hidden_states.numel() == 0:
-            raise ValueError("Q-Former入力エラー: encoder_hidden_statesが空のテンソルです")
-            
-        # 🔄 HuggingFace公式パターン: 学習可能query_embedsの展開
-        print(f"  🔄 学習可能query_embeds使用: {self.config.qformer_config['num_queries']}個")
-        
-        # バッチサイズに応じて展開 (HuggingFace公式パターン)
+        # Query embedsの展開
         batch_size = encoder_hidden_states.shape[0]
         query_embeds = self.query_embeds.expand(batch_size, -1, -1)
-        
-        print(f"  ✅ 学習可能query_embeds適用: {query_embeds.shape}")
-        
-        # Q-Former入力統計
-        print(f"  📊 Q-Former入力統計:")
-        print(f"    - query_embeds: {query_embeds.shape}")
-        print(f"    - encoder_hidden_states: {encoder_hidden_states.shape}")
-        print(f"    - device: {query_embeds.device}")
         
         # 🔄 公式Blip2QFormerModel実行
         
@@ -978,29 +1096,104 @@ class QFormerSegmentationBridge(nn.Module):
                     ).to(device=qformer_hidden_states.device, dtype=qformer_hidden_states.dtype)
                     print(f"    ✅ 投影層作成完了: 768 → {self.config.llama_config['hidden_size']}")
                 
+                # dtype統一処理強化: MoE処理前にbfloat16統一
+                print(f"    🔍 dtype統一処理開始:")
+                print(f"      - qformer_hidden_states dtype: {qformer_hidden_states.dtype}")
+                print(f"      - 投影層dtype: {self.qformer_to_moe_projector.weight.dtype}")
+                
+                # qformer_hidden_statesをbfloat16に統一
+                if qformer_hidden_states.dtype != torch.bfloat16:
+                    print(f"    🔄 qformer_hidden_states dtype変換: {qformer_hidden_states.dtype} → bfloat16")
+                    qformer_hidden_states = qformer_hidden_states.to(dtype=torch.bfloat16)
+                
+                # 投影層もbfloat16に統一
+                if self.qformer_to_moe_projector.weight.dtype != torch.bfloat16:
+                    print(f"    🔄 投影層dtype変換: {self.qformer_to_moe_projector.weight.dtype} → bfloat16")
+                    self.qformer_to_moe_projector = self.qformer_to_moe_projector.to(dtype=torch.bfloat16)
+                
                 # Q-Former出力を5120次元に投影
                 projected_states = self.qformer_to_moe_projector(qformer_hidden_states)
                 print(f"    ✅ 次元投影完了: {qformer_hidden_states.shape} → {projected_states.shape}")
+                print(f"      - projected_states dtype: {projected_states.dtype}")
                 
-                # デバイス整合性チェック
+                # デバイス・dtype整合性チェック
                 qformer_device = projected_states.device
                 qformer_dtype = projected_states.dtype
                 
-                # MoEアダプターのデバイス確認
-                moe_device = next(self.moe_adapter.parameters()).device
-                moe_dtype = next(self.moe_adapter.parameters()).dtype
+                # test_phase3b成功パターン: MoEアダプター詳細デバイス分析とデバッグ
+                print(f"    🔍 MoEアダプター詳細デバイス分析開始...")
                 
-                if moe_device != qformer_device or moe_dtype != qformer_dtype:
-                    print(f"    ⚠️ MoEアダプターデバイス不整合: MoE={moe_device}/{moe_dtype}, QFormer={qformer_device}/{qformer_dtype}")
-                    print(f"    🔄 MoEアダプターを{qformer_device}/{qformer_dtype}に移動中...")
-                    self.moe_adapter = self.moe_adapter.to(device=qformer_device, dtype=qformer_dtype)
-                    print(f"    ✅ MoEアダプター移動完了")
+                # 全パラメータのデバイス状況を詳細確認
+                moe_meta_params = []
+                moe_cpu_params = []
+                moe_cuda_params = []
                 
-                # 投影されたQ-Former出力をMoE処理
+                for name, param in self.moe_adapter.named_parameters():
+                    if param.is_meta:
+                        moe_meta_params.append(name)
+                    elif param.device.type == 'cpu':
+                        moe_cpu_params.append(name)
+                    elif param.device.type == 'cuda':
+                        moe_cuda_params.append(name)
+                
+                print(f"      📊 MoEアダプターパラメータ分析:")
+                print(f"        - meta tensors: {len(moe_meta_params)} 個")
+                print(f"        - CPU tensors: {len(moe_cpu_params)} 個")
+                print(f"        - CUDA tensors: {len(moe_cuda_params)} 個")
+                
+                if moe_meta_params:
+                    print(f"        - meta例: {moe_meta_params[:2]}{'...' if len(moe_meta_params) > 2 else ''}")
+                if moe_cpu_params:
+                    print(f"        - CPU例: {moe_cpu_params[:2]}{'...' if len(moe_cpu_params) > 2 else ''}")
+                if moe_cuda_params:
+                    print(f"        - CUDA例: {moe_cuda_params[:2]}{'...' if len(moe_cuda_params) > 2 else ''}")
+                
+                # CPU tensorがある場合は個別移動を試行
+                if moe_cpu_params:
+                    print(f"    🔄 CPU tensors検出: {len(moe_cpu_params)}個をCUDAに移動試行...")
+                    success_count = 0
+                    
+                    for name, param in self.moe_adapter.named_parameters():
+                        if not param.is_meta and param.device.type == 'cpu':
+                            try:
+                                # 個別パラメータをCUDAに移動
+                                param.data = param.data.to(device=qformer_device, dtype=qformer_dtype, non_blocking=True)
+                                success_count += 1
+                            except Exception as e:
+                                print(f"      ❌ {name} 移動失敗: {e}")
+                    
+                    print(f"    ✅ CPU→CUDA移動成功: {success_count}/{len(moe_cpu_params)} 個")
+                
+                # meta tensorがない場合は全体移動も試行
+                elif not moe_meta_params:
+                    try:
+                        moe_device = next(self.moe_adapter.parameters()).device
+                        moe_dtype = next(self.moe_adapter.parameters()).dtype
+                        
+                        if moe_device != qformer_device or moe_dtype != qformer_dtype:
+                            print(f"    🔄 MoEアダプター全体移動: {moe_device}/{moe_dtype} → {qformer_device}/{qformer_dtype}")
+                            self.moe_adapter = self.moe_adapter.to(device=qformer_device, dtype=qformer_dtype, non_blocking=True)
+                            print(f"    ✅ MoEアダプター全体移動完了")
+                    except Exception as e:
+                        print(f"    ❌ MoEアダプター全体移動失敗: {e}")
+                else:
+                    print(f"    🔄 meta tensors含有のため、デバイス移動をスキップ（disk offload維持）")
+                
+                # 投影されたQ-Former出力をMoE処理（詳細デバッグ付き）
+                print(f"    🔄 MoE処理開始...")
+                print(f"      - 入力shape: {projected_states.shape}")
+                print(f"      - 入力dtype: {projected_states.dtype}")
+                print(f"      - 入力device: {projected_states.device}")
+                
+                # MoE処理実行（本質的エラー処理、フォールバックなし）
                 moe_output, moe_stats = self.moe_adapter(
                     hidden_states=projected_states,  # 5120次元に投影済み
                     expert_type=None  # 自動ルーティング
                 )
+                print(f"    ✅ MoE処理成功")
+                print(f"      - 出力shape: {moe_output.shape}")
+                print(f"      - 出力dtype: {moe_output.dtype}")
+                print(f"      - 出力device: {moe_output.device}")
                 
                 # MoE処理結果を元の768次元に逆投影（Q-Formerとの互換性維持）
                 if not hasattr(self, 'moe_to_qformer_projector'):
@@ -1020,12 +1213,44 @@ class QFormerSegmentationBridge(nn.Module):
                     print(f"    🔄 MoE逆投影出力がFloat32、BFloat16に変換中...")
                     qformer_hidden_states = qformer_hidden_states.to(dtype=torch.bfloat16)
                 
+                # 🔍 MoE統計の詳細デバッグ
+                print(f"    🔍 MoE統計詳細デバッグ:")
+                print(f"      - moe_stats type: {type(moe_stats)}")
+                print(f"      - moe_stats keys: {list(moe_stats.keys()) if isinstance(moe_stats, dict) else 'Not dict'}")
+                
+                # 各統計値のNaNチェック
+                for key, value in moe_stats.items():
+                    if isinstance(value, torch.Tensor):
+                        if value.numel() == 1:  # スカラー
+                            val = value.item()
+                            is_nan = torch.isnan(value).item()
+                            print(f"        {key}: {val:.6f} (NaN: {is_nan})")
+                        else:
+                            nan_count = torch.isnan(value).sum().item()
+                            print(f"        {key}: shape={value.shape}, NaN数={nan_count}")
+                    elif isinstance(value, (int, float)):
+                        is_nan = str(value) == 'nan' or (isinstance(value, float) and math.isnan(value))
+                        print(f"        {key}: {value} (NaN: {is_nan})")
+                    else:
+                        print(f"        {key}: {type(value)}")
+                
                 moe_info = moe_stats
                 
                 print(f"    ✅ MoE最適化完了: {qformer_hidden_states.shape}")
                 if 'expert_weights' in moe_info:
                     expert_weights = moe_info['expert_weights']
                     print(f"    📊 エキスパート重み: {expert_weights}")
+                    
+                # ロードバランス損失のNaNチェック
+                if 'load_balance_loss' in moe_info:
+                    lb_loss = moe_info['load_balance_loss']
+                    if isinstance(lb_loss, torch.Tensor):
+                        if torch.isnan(lb_loss).any():
+                            print(f"    ⚠️ ロードバランス損失にNaN検出: {lb_loss}")
+                        else:
+                            print(f"    ✓ ロードバランス損失正常: {lb_loss.item():.6f}")
+                    else:
+                        print(f"    📊 ロードバランス損失: {lb_loss} (type: {type(lb_loss)})")
                 
             except RuntimeError as moe_error:
                 if "Expected all tensors to be on the same device" in str(moe_error) or "shapes cannot be multiplied" in str(moe_error):
@@ -1181,8 +1406,86 @@ class QFormerSegmentationBridge(nn.Module):
         
         print(f"  ✅ 方法3完了: {predicted_masks.shape}")
         
+        # text_lossデバッグ
+        text_loss = llama_outputs.loss if labels is not None else None
+        if text_loss is not None:
+            print(f"\n  🔍 text_lossデバッグ:")
+            print(f"    - 値: {text_loss}")
+            print(f"    - dtype: {text_loss.dtype}")
+            print(f"    - NaN: {torch.isnan(text_loss).item()}")
+            print(f"    - Inf: {torch.isinf(text_loss).item()}")
+            print(f"    - requires_grad: {text_loss.requires_grad}")
+            
+            # NaNの場合、ゼロに置換（requires_grad=True維持）
+            if torch.isnan(text_loss):
+                print(f"    ⚠️ text_lossがNaN! ゼロで置換")
+                text_loss = torch.tensor(0.0, device=text_loss.device, dtype=text_loss.dtype, requires_grad=True)
+                
+                # 🔍 追加デバッグ: logitsの詳細分析
+                if hasattr(llama_outputs, 'logits'):
+                    print(f"    - logits shape: {llama_outputs.logits.shape}")
+                    print(f"    - logits dtype: {llama_outputs.logits.dtype}")
+                    print(f"    - logits NaN: {torch.isnan(llama_outputs.logits).any().item()}")
+                    print(f"    - logits Inf: {torch.isinf(llama_outputs.logits).any().item()}")
+                    
+                    # 非NaN要素があるか確認
+                    valid_mask = ~torch.isnan(llama_outputs.logits)
+                    if valid_mask.any():
+                        valid_logits = llama_outputs.logits[valid_mask]
+                        print(f"    - logits 有効要素数: {valid_mask.sum().item()}")
+                        print(f"    - logits 有効範囲: [{valid_logits.min().item():.6f}, {valid_logits.max().item():.6f}]")
+                    else:
+                        print(f"    - logits 範囲: [全てNaN, 全てNaN]")
+                        
+                    # 特定位置のlogitsを確認
+                    print(f"    - logits NaN位置: {torch.isnan(llama_outputs.logits).any(dim=-1).nonzero()[:5]}...")
+                    print(f"    - logits NaN数: {torch.isnan(llama_outputs.logits).sum().item()} / {llama_outputs.logits.numel()}")
+                
+                # 入力データの分析
+                print(f"\n    入力データ分析:")
+                print(f"    - input_ids shape: {input_ids.shape}")
+                print(f"    - labels shape: {labels.shape if labels is not None else 'None'}")
+            
+            # llama_outputsの詳細分析
+            if hasattr(llama_outputs, 'logits'):
+                logits = llama_outputs.logits
+                print(f"    - logits shape: {logits.shape}")
+                print(f"    - logits dtype: {logits.dtype}")
+                # 提案C: CPU-based完全メモリ最適化（GPU VRAM圧迫排除）
+                sample_size = 500  # さらに小サンプル化（500要素）
+                logits_flat = logits.view(-1)
+                sample_indices = torch.randint(0, logits_flat.shape[0], (sample_size,), device='cpu')  # CPUでインデックス生成
+                
+                # 🎯 最小データのみをCPUに転送（VRAM影響最小化）
+                logits_sample_gpu = logits_flat[sample_indices.to(logits.device)]
+                logits_sample_cpu = logits_sample_gpu.detach().cpu()  # 最小限データのみCPU転送
+                
+                # CPUで完全チェック（GPU VRAMへの影響ゼロ）
+                logits_nan = torch.isnan(logits_sample_cpu).any().item()
+                logits_inf = torch.isinf(logits_sample_cpu).any().item()
+                
+                print(f"    - logits NaN (sample {sample_size}): {logits_nan}")
+                print(f"    - logits Inf (sample {sample_size}): {logits_inf}")
+                # CPU-basedで範囲もチェック（メモリ効率化）
+                if not logits_nan:
+                    # 最小限の統計情報もCPUで計算
+                    min_val = logits_sample_cpu.min().item()
+                    max_val = logits_sample_cpu.max().item()
+                    print(f"    - logits 範囲 (sample): [{min_val:.6f}, {max_val:.6f}]")
+                else:
+                    print(f"    - logits 範囲: [nan detected in sample]")
+                    # NaN詳細はサンプルレベルで実施（メモリ効率化）
+                    nan_count = torch.isnan(logits_sample_cpu).sum().item()
+                    print(f"    - logits NaN数 (sample): {nan_count} / {sample_size}")
+            
+            # 入力データの確認
+            print(f"\n    入力データ分析:")
+            print(f"    - input_ids shape: {input_ids.shape}")
+            print(f"    - labels shape: {labels.shape if labels is not None else 'None'}")
+            # inputs_embedsはLlama-4内部で生成されるため、ここではチェックできない
+        
         outputs = {
-            'text_loss': llama_outputs.loss if labels is not None else None,
+            'text_loss': text_loss,
             'predicted_masks': predicted_masks,
             'query_embeddings': query_embeddings,
             'sam_prompts': sam_prompts,

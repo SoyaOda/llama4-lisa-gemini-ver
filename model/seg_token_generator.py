@@ -88,6 +88,20 @@ class LightweightSEGTokenGenerator(nn.Module):
                 - 'sam_prompt': SAM2制御用プロンプト (B, sam_prompt_dim)
                 - 'attention_weights': Q-Formerクエリへの注意重み (B, num_queries)
         """
+        # デバッグ: 入力デバイス確認
+        logger.info("🔍 SEGトークン生成器内部デバイス詳細:")
+        for key, value in qformer_outputs.items():
+            if hasattr(value, 'device'):
+                logger.info(f"  - 入力 {key}: device={value.device}, dtype={value.dtype}, shape={value.shape}")
+        
+        if llama_hidden_states is not None:
+            logger.info(f"  - llama_hidden_states: device={llama_hidden_states.device}, dtype={llama_hidden_states.dtype}")
+        
+        # 生成器パラメータのデバイス確認
+        logger.info(f"  - self.seg_token_projector[0].weight: device={self.seg_token_projector[0].weight.device}")
+        logger.info(f"  - self.to_sam_prompt[0].weight: device={self.to_sam_prompt[0].weight.device}")
+        logger.info(f"  - self.seg_token_embedding: device={self.seg_token_embedding.device}")
+        
         # 入力検証
         if 'query_embeds' not in qformer_outputs:
             raise ValueError("qformer_outputs must contain 'query_embeds'")
@@ -103,11 +117,28 @@ class LightweightSEGTokenGenerator(nn.Module):
             raise ValueError(f"query_embeds must be at least 3D, got {query_embeds.dim()}D tensor with shape {query_embeds.shape}")
             
         batch_size = query_embeds.size(0)
-        device = query_embeds.device
-        dtype = query_embeds.dtype
+        
+        # 提案A: SEGトークン生成器のデバイスに統一（最小侵襲修正）
+        target_device = next(self.parameters()).device  # SEGトークン生成器のデバイス（cuda:0）
+        target_dtype = query_embeds.dtype
+        
+        # 入力テンソルをSEGトークン生成器のデバイスに移動
+        logger.info(f"  - デバイス統一: {query_embeds.device} → {target_device}")
+        query_embeds = query_embeds.to(device=target_device, dtype=target_dtype)
+        
+        if llama_hidden_states is not None:
+            logger.info(f"  - llama_hidden_states移動: {llama_hidden_states.device} → {target_device}")
+            llama_hidden_states = llama_hidden_states.to(device=target_device, dtype=target_dtype)
+        
+        device = target_device
+        dtype = target_dtype
+        logger.info(f"  - 統一後デバイス: {device}, dtype: {dtype}")
         
         # 2. 学習可能な[SEG]トークン埋め込みとの注意機構
+        logger.info(f"  - seg_token_embedding元デバイス: {self.seg_token_embedding.device}")
+        logger.info(f"  - 目標デバイス: {device}, 目標dtype: {dtype}")
         seg_embedding = self.seg_token_embedding.expand(batch_size, -1, -1).to(device=device, dtype=dtype)
+        logger.info(f"  - seg_embedding移動後: device={seg_embedding.device}, dtype={seg_embedding.dtype}")
         
         # クエリとの類似度計算（スケーリング付きドット積注意）
         attention_scores = torch.matmul(
@@ -124,7 +155,10 @@ class LightweightSEGTokenGenerator(nn.Module):
         ).squeeze(1)  # (B, 768)
         
         # 3. Llama次元への投影
+        logger.info(f"  - seg_token_qformer: device={seg_token_qformer.device}, shape={seg_token_qformer.shape}")
+        logger.info(f"  - seg_token_projector device: {next(self.seg_token_projector.parameters()).device}")
         seg_token_hidden = self.seg_token_projector(seg_token_qformer)  # (B, 5120)
+        logger.info(f"  - seg_token_hidden: device={seg_token_hidden.device}, shape={seg_token_hidden.shape}")
         
         # 4. Llama隠れ状態との融合（利用可能な場合）
         if llama_hidden_states is not None:
@@ -136,10 +170,16 @@ class LightweightSEGTokenGenerator(nn.Module):
                 llama_pooled = llama_hidden_states  # (B, 5120)
             
             # 残差接続で融合（学習可能な重み付き）
+            logger.info(f"  - llama_pooled: device={llama_pooled.device}, shape={llama_pooled.shape}")
+            logger.info(f"  - 融合前 seg_token_hidden: device={seg_token_hidden.device}")
             seg_token_hidden = seg_token_hidden + 0.5 * llama_pooled
+            logger.info(f"  - 融合後 seg_token_hidden: device={seg_token_hidden.device}")
         
         # 5. SAM2プロンプト生成（Sa2VA準拠）
+        logger.info(f"  - to_sam_prompt入力: device={seg_token_hidden.device}, shape={seg_token_hidden.shape}")
+        logger.info(f"  - to_sam_prompt device: {next(self.to_sam_prompt.parameters()).device}")
         sam_prompt = self.to_sam_prompt(seg_token_hidden)  # (B, 256)
+        logger.info(f"  - sam_prompt出力: device={sam_prompt.device}, shape={sam_prompt.shape}")
         
         # 6. 出力辞書の構築
         outputs = {

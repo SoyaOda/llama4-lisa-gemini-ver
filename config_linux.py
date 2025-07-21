@@ -23,14 +23,38 @@ import torch  # Web調査修正: torch.bfloat16使用のため
 # ==============================================================================
 PROJECT_ROOT = Path(__file__).parent
 
-# データセットベースディレクトリ
-DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/dataset")
+# ==============================================================================
+# Lambda Cloud インスタンス自動パス検出
+# ==============================================================================
+def _detect_lambda_path():
+    """Lambda Cloudのインスタンスタイプを自動検出してパスを決定"""
+    # 候補パス（優先順：central-texas → north-texas）
+    path_candidates = [
+        "/lambda/nfs/llama4-lisa-project-fs-central-texas",
+        "/lambda/nfs/llama4-lisa-project-fs-north-texas"
+    ]
+    
+    for base_path in path_candidates:
+        if os.path.exists(base_path):
+            print(f"✅ Lambda Cloud パス検出: {base_path}")
+            return base_path
+    
+    # フォールバック: 環境変数または最初の候補
+    fallback_path = "/lambda/nfs/llama4-lisa-project-fs-central-texas"
+    print(f"⚠️  Lambda Cloud パス検出失敗、フォールバック使用: {fallback_path}")
+    return fallback_path
 
-# SAMチェックポイントパス（ViT-H）
-SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam_vit_h_4b8939.pth")
+# Lambda Cloud ベースパス自動検出
+_LAMBDA_BASE_PATH = _detect_lambda_path()
 
-# SAM2 Checkpoints (2025年ベストプラクティス - Web調査修正版)
-SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", "/lambda/nfs/llama4-lisa-project-fs-north-texas/data/weights/sam2_hiera_large.pt")
+# データセットベースディレクトリ（自動切り替え対応）
+DATASET_BASE_DIR = os.environ.get("LISA_DATASET_BASE_DIR", f"{_LAMBDA_BASE_PATH}/data/dataset")
+
+# SAMチェックポイントパス（ViT-H）（自動切り替え対応）
+SAM_CHECKPOINT_PATH = os.environ.get("LISA_SAM_CHECKPOINT_PATH", f"{_LAMBDA_BASE_PATH}/data/weights/sam_vit_h_4b8939.pth")
+
+# SAM2 Checkpoints (2025年ベストプラクティス - Web調査修正版)（自動切り替え対応）
+SAM2_CHECKPOINT_PATH = os.environ.get("LISA_SAM2_CHECKPOINT_PATH", f"{_LAMBDA_BASE_PATH}/data/weights/sam2_hiera_large.pt")
 SAM2_CONFIG_NAME = "sam2_hiera_l.yaml"  # Web調査ベース正式名
 SAM2_DOWNLOAD_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt"  # ✅ 修正: 正しいファイル名
 SAM2_HF_MODEL_ID = "facebook/sam2-hiera-large"  # ✅ HuggingFaceフォールバック用
@@ -57,7 +81,11 @@ LOW_CPU_MEM_USAGE = True  # CPU→GPU転送を最適化（メモリ使用量削�
 ATTN_IMPLEMENTATION = "sdpa"  # 最も安定（flex_attentionバグ回避、Issue #37352）
 # 注: flex_attentionは推奨だがTypeErrorバグあり、eagerもcausal maskバグあり（Issue #37322）
 DEVICE_MAP = "auto"                     # GPU自動分散（実使用値）
-TORCH_DTYPE = torch.bfloat16            # 推奨精度（実使用値・Web調査修正）
+TORCH_DTYPE = torch.bfloat16            # Llama-4 Scout推奨精度（BFloat16バックワードパス対応・2025年Web調査修正）
+
+# BFloat16精度対応設定（2025年Webリサーチ推奨）
+USE_LOSS_SCALING = False                # BFloat16はLoss Scaling不要（自動安定性）
+INITIAL_LOSS_SCALE = 2**16              # 初期Loss Scale値（BFloat16では未使用）
 
 # モデル構造パラメータ
 LLAMA_HIDDEN_SIZE = 5120               # Llama4-Scout隠れ層サイズ
@@ -110,28 +138,32 @@ ADDITIONAL_TRAINABLE_PARAMS = [
 # ==============================================================================
 # 4. 学習・最適化設定（edit_config.md推奨値 + A100 80GB × 8GPU最適化）
 # ==============================================================================
-# 基本学習設定（edit_config2.md推奨値：MoE最適化）
-LEARNING_RATE = 1e-4                   # AdamW学習率（edit_config2.md推奨：1e-4〜2e-4）
-WEIGHT_DECAY = 5e-2                    # 重み減衰（edit_config.md: 0.05推奨）
+# 基本学習設定（NaN完全対策版：2025年Webリサーチ準拠）
+LEARNING_RATE = 1e-5                   # AdamW学習率（5e-5 → 1e-5：極保守的設定）
+WEIGHT_DECAY = 1e-2                    # 重み減衰（5e-2 → 1e-2：NaN対策）
 BETA1 = 0.9                            # Adam beta1（維持）
-BETA2 = 0.999                          # Adam beta2（edit_config.md推奨）
+BETA2 = 0.95                           # Adam beta2（0.999 → 0.95：NaN対策）
 
-# エポック・ステップ設定（edit_config.md推奨）
+# エポック・ステップ設定（NaN完全対策版）
 EPOCHS = 2                             # デフォルトエポック数（1-3エポック推奨）
 STEPS_PER_EPOCH = 500                  # ステップ/エポック
-WARMUP_RATIO = 0.03                    # ウォームアップ比率（全ステップの3%）
-LR_SCHEDULER_TYPE = "cosine"           # 学習率スケジューラタイプ（コサイン減衰）
+WARMUP_RATIO = 0.2                     # ウォームアップ比率（0.1 → 0.2：超長期ウォームアップ）
+LR_SCHEDULER_TYPE = "linear"           # 学習率スケジューラ（cosine → linear：安定性優先）
 
-# バッチサイズ・勾配設定（edit_config.md推奨：有効バッチサイズ64-128）
+# バッチサイズ・勾配設定（NaN完全対策版）
 BATCH_SIZE_PER_GPU = 1                 # GPU単位バッチサイズ（17Bモデル用）
-GRADIENT_ACCUMULATION_STEPS = 16       # 勾配蓄積ステップ数
-# 実効バッチサイズ = 1 × 16 × 8GPU = 128（edit_config.md推奨範囲内）
+GRADIENT_ACCUMULATION_STEPS = 2        # 勾配蓄積ステップ数（4 → 2：さらに安全）
+# 実効バッチサイズ = 1 × 2 × 2GPU = 4（極安全設定）
 
-# システム最適化設定
+# システム最適化設定（NaN完全対策版 + 2025年数値安定化）
 MIXED_PRECISION = True                 # BF16混合精度学習
 GRADIENT_CHECKPOINTING = True          # メモリ効率化勾配チェックポイント
 DATALOADER_NUM_WORKERS = 4             # データローダワーカー数
-GRADIENT_CLIP_NORM = 1.0              # 勾配クリッピングノルム（edit_config.md推奨）
+GRADIENT_CLIP_NORM = 1.0               # 勾配クリッピング（BFloat16用緩和・2025年Web調査準拠）
+USE_LOSS_SCALING = False               # BFloat16はLoss Scaling不要（2025年推奨）
+INITIAL_LOSS_SCALE = 2**10             # 初期Loss Scale値（BFloat16では未使用）
+LAYERNORM_EPSILON = 1e-5               # LayerNorm epsilon（BFloat16安定値）
+ATTENTION_ENTROPY_MONITORING = True    # Attention Entropy Collapse監視（2025年研究準拠）
 USE_8BIT_ADAM = True                   # 8bit AdamWオプティマイザ使用（メモリ25%削減）
 OPTIM_TYPE = "paged_adamw_32bit"       # edit_config.md推奨: QLoRA使用時のメモリ効率オプティマイザ
 
@@ -146,7 +178,7 @@ MAX_NEW_TOKENS = 100                   # 生成時最大新規トークン数
 # 量子化設定（Vision層とMoEルーター用）
 QUANTIZATION_CONFIG = {
     "load_in_4bit": True,
-    "bnb_4bit_compute_dtype": "bfloat16",
+    "bnb_4bit_compute_dtype": torch.bfloat16,  # 2025年Web調査修正: torch.bfloat16使用
     "bnb_4bit_use_double_quant": True,
     "bnb_4bit_quant_type": "nf4",
     "quantize_vision_layers": True,      # Vision層の量子化を有効化
@@ -166,6 +198,40 @@ REFER_SEG_DATA = "refclef||refcoco||refcoco+||refcocog"
 VQA_DATA = "llava_instruct_150k"
 REASON_SEG_DATA = "ReasonSeg|train"
 VAL_DATASET = "ReasonSeg|val"
+
+# ==============================================================================
+# 5.5. パス検証関数
+# ==============================================================================
+def validate_and_report_paths():
+    """設定されたパスの検証とレポート出力"""
+    print("\n" + "="*60)
+    print("Lambda Cloud 環境パス検証レポート")
+    print("="*60)
+    
+    print(f"🔍 検出されたベースパス: {_LAMBDA_BASE_PATH}")
+    print(f"📁 データセットパス: {DATASET_BASE_DIR}")
+    print(f"   - 存在確認: {'✅ 存在' if os.path.exists(DATASET_BASE_DIR) else '❌ 不存在'}")
+    
+    if os.path.exists(DATASET_BASE_DIR):
+        # 主要データセットの存在確認
+        datasets_to_check = [
+            "reason_seg/ReasonSeg/train",
+            "reason_seg/ReasonSeg/explanatory",
+            "refer_seg",
+            "ade20k",
+            "cocostuff"
+        ]
+        
+        print(f"📊 主要データセット確認:")
+        for dataset in datasets_to_check:
+            full_path = os.path.join(DATASET_BASE_DIR, dataset)
+            status = "✅ 存在" if os.path.exists(full_path) else "❌ 不存在"
+            print(f"   - {dataset}: {status}")
+    
+    print(f"🎯 SAM2チェックポイント: {SAM2_CHECKPOINT_PATH}")
+    print(f"   - 存在確認: {'✅ 存在' if os.path.exists(SAM2_CHECKPOINT_PATH) else '❌ 不存在'}")
+    
+    print("="*60 + "\n")
 
 # ==============================================================================
 # 6. 統一設定取得関数
