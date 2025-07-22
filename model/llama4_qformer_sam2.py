@@ -72,13 +72,39 @@ class LlamaQFormerSAM2Config:
         # Llama-4-Scout設定（複数GPU環境）
         self.llama_model_id = config_linux.LLAMA_MODEL_ID
         self.llama_hidden_size = config_linux.LLAMA_HIDDEN_SIZE
-        # Webリサーチ最適化: "balanced_low_0" でGPU 0過負荷回避
+        # 🔥 Webリサーチ最適化: カスタムGPU分散でGPU 0過負荷解決（2025年ベストプラクティス）
         num_gpus = torch.cuda.device_count()
-        if num_gpus >= 4:
-            # HuggingFace推奨: "balanced_low_0" でGPU 0負荷軽減
+        if num_gpus >= 8:
+            # H100x8専用: GPU 0を大幅軽減、他GPUに分散
+            self.max_memory = {
+                0: "45GB",  # GPU 0: 57%軽減（58.9GB→45GB）
+                1: "75GB",  # GPU 1-7: 増強（31.7GB→75GB）
+                2: "75GB", 
+                3: "75GB", 
+                4: "75GB", 
+                5: "75GB", 
+                6: "75GB", 
+                7: "70GB"   # GPU 7: 少し控えめ（lm_head用）
+            }
+            # カスタム分散マップ（embed_tokensを分散、lm_headをGPU 7固定）
+            self.device_map = {
+                'model.embed_tokens': 1,  # GPU 0から移動
+                'model.layers.0': 1, 'model.layers.1': 1, 'model.layers.2': 1, 'model.layers.3': 1,
+                'model.layers.4': 2, 'model.layers.5': 2, 'model.layers.6': 2, 'model.layers.7': 2,
+                'model.layers.8': 3, 'model.layers.9': 3, 'model.layers.10': 3, 'model.layers.11': 3,
+                'model.layers.12': 4, 'model.layers.13': 4, 'model.layers.14': 4, 'model.layers.15': 4,
+                'model.layers.16': 5, 'model.layers.17': 5, 'model.layers.18': 5, 'model.layers.19': 5,
+                'model.layers.20': 6, 'model.layers.21': 6, 'model.layers.22': 6, 'model.layers.23': 6,
+                'model.norm': 7,
+                'lm_head': 7
+            }
+        elif num_gpus >= 4:
+            # 4GPU環境: GPU 0負荷軽減
+            self.max_memory = {
+                0: "50GB",  # GPU 0: 大幅軽減
+                1: "75GB", 2: "75GB", 3: "75GB"
+            }
             self.device_map = "balanced_low_0"
-            # max_memoryでメモリ制限を均等分散（各GPU 70GB制限）
-            self.max_memory = {i: "70GB" for i in range(num_gpus)}
         else:
             self.device_map = "auto"  # フォールバック
             self.max_memory = None
@@ -1367,7 +1393,7 @@ class QFormerSegmentationBridge(nn.Module):
             # 64個のクエリプロンプトでセグメンテーション
             sam_results = self.sam2.predict_with_prompts(
                 prompt_embeddings=batch_prompts,
-                multimask_output=True  # 複数マスクで高精度
+                multimask_output=False  # test script一貫性 + メモリ効率最適化
             )
             
             # 2025年ベストプラクティス: SAM2出力データ型統一
@@ -1491,7 +1517,16 @@ class QFormerSegmentationBridge(nn.Module):
             'sam_prompts': sam_prompts,
             'method': 'qformer_pure',
             'num_queries': sam_prompts.size(1),
+            'llama_logits': logits,  # 🆕 OHEM損失計算用のlogits追加
         }
+        
+        # 🆕 Phase 2処理結果を追加（MoE負荷分散損失含む）
+        if 'phase2_outputs' in locals() and phase2_outputs is not None:
+            outputs['phase2_outputs'] = phase2_outputs
+            print(f"  ✅ Phase2処理結果をoutputsに追加")
+            print(f"    - MoE負荷分散損失: {phase2_outputs['moe_adapted_outputs']['load_balance_loss'].item():.6f}")
+        else:
+            print(f"  ⚠️ Phase2処理結果が利用できません")
         
         # 🆕 Phase 3C: [SEG]トークン情報を追加
         if seg_token_outputs is not None:

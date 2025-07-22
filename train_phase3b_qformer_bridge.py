@@ -310,6 +310,10 @@ def create_model_and_components(args, logger):
                 # 🔥 Expert Parallelism戦略: Llama-4 Scout MoE最適化
                 logger.info("🎆 Expert Parallelism準備: Llama-4 Scout MoE構造分析")
                 logger.info("📋 MoEアーキテクチャ: 16 Experts per layer, 17B active params per token")
+                logger.info(f"🔍 device_count確認: {device_count}個GPU検出")
+                
+                # 🔍 Expert Parallelismデバッグ: device_map構造確認
+                logger.info("🔍 Expert Parallelism device_map構築開始...")
                 
                 # Llama-4 Scout MoE構造に最適化したExpert Parallelism device_map
                 device_map_setting = {
@@ -389,10 +393,20 @@ def create_model_and_components(args, logger):
                     'lm_head': 7
                 }
                 
+                # 🔍 Expert Parallelismデバッグ: device_map詳細出力
                 logger.info("✓ Expert Parallelism device_map構成完了:")
-                logger.info("  - GPU 0: embed_tokens + layers 0-2 (初期処理)")
-                logger.info("  - GPU 1-6: layers 3-38 (Expert分散配置)")
-                logger.info("  - GPU 7: layers 39-47 + lm_head (最終処理)")
+                logger.info(f"  🔍 device_map_setting keys: {len(device_map_setting)}")
+                logger.info(f"  🔍 embed_tokens device: {device_map_setting.get('model.embed_tokens', 'NOT_SET')}")
+                logger.info(f"  🔍 lm_head device: {device_map_setting.get('lm_head', 'NOT_SET')}")
+                
+                # GPU別コンポーネント数確認
+                gpu_component_count = {}
+                for component, gpu_id in device_map_setting.items():
+                    if gpu_id not in gpu_component_count:
+                        gpu_component_count[gpu_id] = 0
+                    gpu_component_count[gpu_id] += 1
+                
+                logger.info(f"  🔍 GPU別コンポーネント数: {gpu_component_count}")
                 logger.info("📊 メモリ効率: 109B total → 17B active per token")
                 
                 if device_count >= 8:
@@ -496,8 +510,35 @@ def create_model_and_components(args, logger):
                 except Exception as config_error:
                     logger.warning(f"  ⚠️ config修正スキップ: {config_error}")
                 
+                # 🔍 Expert Parallelismデバッグ: モデルロード直前
+                logger.info("🔍 Expert Parallelism: モデルロード直前チェック")
+                logger.info(f"  - model_id: {model_id}")
+                logger.info(f"  - device_map type: {type(load_kwargs['device_map'])}")
+                logger.info(f"  - device_map length: {len(load_kwargs['device_map'])}")
+                logger.info(f"  - max_memory type: {type(load_kwargs['max_memory'])}")
+                
                 llama4_model = model_class.from_pretrained(model_id, **load_kwargs)
-                logger.info(f"✓ {model_class.__name__}使用（LISA準拠CausalLM + カスタムdevice_map）")
+                logger.info(f"✓ {model_class.__name__}使用（Expert Parallelism + カスタムdevice_map）")
+                
+                # 🔍 Expert Parallelismデバッグ: モデルロード直後
+                logger.info("🔍 Expert Parallelism: モデルロード直後チェック")
+                if hasattr(llama4_model, 'hf_device_map'):
+                    actual_device_map = llama4_model.hf_device_map
+                    logger.info(f"  - 実際のdevice_map length: {len(actual_device_map)}")
+                    
+                    # 重要コンポーネントの配置確認
+                    embed_device = actual_device_map.get('model.embed_tokens', 'NOT_FOUND')
+                    lm_head_device = actual_device_map.get('lm_head', 'NOT_FOUND')
+                    logger.info(f"  - embed_tokens実際配置: {embed_device}")
+                    logger.info(f"  - lm_head実際配置: {lm_head_device}")
+                    
+                    # 設定と実際の比較
+                    expected_embed = device_map_setting.get('model.embed_tokens', 'NOT_SET')
+                    expected_lm_head = device_map_setting.get('lm_head', 'NOT_SET')
+                    logger.info(f"  - embed_tokens: 設定{expected_embed} vs 実際{embed_device}")
+                    logger.info(f"  - lm_head: 設定{expected_lm_head} vs 実際{lm_head_device}")
+                else:
+                    logger.error("⚠️ hf_device_mapが見つかりません！")
                 
                 # 🚨 事後lm_head修正: ディスク配置を検出して修正
                 logger.info("🔧 lm_head配置確認・修正中...")
@@ -635,6 +676,116 @@ def create_model_and_components(args, logger):
             
             llama_params = sum(p.numel() for p in llama4_model.parameters())
             logger.info(f"✓ Llama-4-Scout初期化完了: {llama_params:,} パラメータ")
+            
+            # 🔍 Expert Parallelism効果確認（詳細デバッグ）
+            if hasattr(llama4_model, 'hf_device_map'):
+                logger.info("🔍 Expert Parallelism効果確認開始...")
+                actual_device_map = llama4_model.hf_device_map
+                
+                # Expert構造の検索
+                expert_components = []
+                moe_components = []
+                for component, device in actual_device_map.items():
+                    component_lower = component.lower()
+                    if 'expert' in component_lower:
+                        expert_components.append((component, device))
+                    elif 'moe' in component_lower or 'mixture' in component_lower:
+                        moe_components.append((component, device))
+                
+                logger.info(f"🔍 Expert コンポーネント数: {len(expert_components)}")
+                logger.info(f"🔍 MoE コンポーネント数: {len(moe_components)}")
+                
+                if expert_components:
+                    logger.info("🎆 Expert コンポーネント発見:")
+                    for component, device in expert_components[:5]:  # 最初の5個を表示
+                        logger.info(f"  {component} -> GPU {device}")
+                    if len(expert_components) > 5:
+                        logger.info(f"  ... その他 {len(expert_components) - 5} 個")
+                        
+                    # Expert分散状況を集計
+                    expert_distribution = {}
+                    for component, device in expert_components:
+                        if device not in expert_distribution:
+                            expert_distribution[device] = 0
+                        expert_distribution[device] += 1
+                    logger.info(f"🎆 Expert分散状況: {expert_distribution}")
+                else:
+                    logger.warning("⚠️ 明示的Expert構造が検出されませんでした - より詳細な分析を開始")
+                    
+                    # Llama-4 MoE詳細構造分析（Webリサーチベース）
+                    logger.info("🔍 Llama-4 MoE詳細構造分析:")
+                    
+                    # MoE関連パターンを拡張検索
+                    moe_patterns = ['mlp', 'feed_forward', 'gate_proj', 'up_proj', 'down_proj', 
+                                   'router', 'gating', 'dense', 'wi_0', 'wi_1', 'wo']
+                    moe_related_components = []
+                    
+                    component_analysis = {
+                        'total': len(actual_device_map),
+                        'transformer_layers': 0,
+                        'mlp_components': 0,
+                        'attention_components': 0,
+                        'embed_components': 0,
+                        'head_components': 0,
+                        'moe_potential': 0
+                    }
+                    
+                    for component in actual_device_map.keys():
+                        component_lower = component.lower()
+                        
+                        if 'layers' in component_lower or 'blocks' in component_lower:
+                            component_analysis['transformer_layers'] += 1
+                        elif 'embed' in component_lower:
+                            component_analysis['embed_components'] += 1
+                        elif 'lm_head' in component_lower or 'head' in component_lower:
+                            component_analysis['head_components'] += 1
+                        elif 'attn' in component_lower or 'attention' in component_lower:
+                            component_analysis['attention_components'] += 1
+                        
+                        # MoE関連パターン検索
+                        for pattern in moe_patterns:
+                            if pattern in component_lower:
+                                moe_related_components.append(component)
+                                component_analysis['moe_potential'] += 1
+                                if pattern in ['mlp', 'feed_forward', 'gate_proj', 'up_proj', 'down_proj']:
+                                    component_analysis['mlp_components'] += 1
+                                break
+                    
+                    logger.info(f"  📊 コンポーネント詳細分析:")
+                    for key, value in component_analysis.items():
+                        logger.info(f"    - {key}: {value}")
+                    
+                    if moe_related_components:
+                        logger.info(f"  🎯 MoE関連候補コンポーネント数: {len(moe_related_components)}")
+                        logger.info(f"  🎯 MoE関連コンポーネント例:")
+                        for component in moe_related_components[:10]:  # 最初の10個を表示
+                            device = actual_device_map.get(component, 'unknown')
+                            logger.info(f"    - {component} -> GPU {device}")
+                        if len(moe_related_components) > 10:
+                            logger.info(f"    - ... その他 {len(moe_related_components) - 10} 個")
+                    
+                    # Llama-4期待構造との比較
+                    expected_layers = 48  # Llama-4標準
+                    if component_analysis['transformer_layers'] > 0:
+                        logger.info(f"  🔍 期待Transformer層数: ~{expected_layers}")
+                        logger.info(f"  🔍 実際検出層数: {component_analysis['transformer_layers']}")
+                        
+                        if component_analysis['mlp_components'] > 0:
+                            mlp_per_layer = component_analysis['mlp_components'] / max(component_analysis['transformer_layers'], 1)
+                            logger.info(f"  🔍 層あたりMLP数: {mlp_per_layer:.1f}")
+                            if mlp_per_layer > 1.5:  # 通常のTransformerなら1.0程度
+                                logger.info(f"  ✅ 高MLP密度検出: MoE構造の可能性高")
+                            else:
+                                logger.info(f"  ❓ 標準的MLP密度: 通常Transformer或いは内蔵MoE")
+                    
+                    # 結論
+                    if component_analysis['moe_potential'] > 20:  # 閾値調整
+                        logger.info(f"  ✅ MoE構造高可能性: {component_analysis['moe_potential']}個のMoE関連コンポーネント")
+                        logger.info(f"  📝 Llama-4のMoE構造はMLPレイヤー内部に埋め込まれている可能性")
+                    else:
+                        logger.info(f"  ❓ MoE構造不明: 標準Transformer或いは高度に統合されたMoE")
+            else:
+                logger.error("⚠️ hf_device_mapが存在しません！Expert Parallelism確認不可")
         else:
             # ❌ ダミーモデルフォールバック削除 - 明確にエラーで停止
             error_msg = "❌ HuggingFace Transformersが利用できません。Lambda環境のtransformersライブラリを確認してください。"
