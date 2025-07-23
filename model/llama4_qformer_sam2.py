@@ -924,13 +924,18 @@ class QFormerSegmentationBridge(nn.Module):
         print(f"  🔍 Q-Former 64クエリ抽出...")
         encoder_hidden_states = llama_outputs.hidden_states[-1]
         
+        # 🔥 デバイス転送: Llama-4出力をQ-Formerデバイスに転送
+        qformer_device = next(self.qformer.parameters()).device
+        if encoder_hidden_states.device != qformer_device:
+            print(f"  🔄 Llama-4→Q-Former デバイス転送: {encoder_hidden_states.device} → {qformer_device}")
+            encoder_hidden_states = encoder_hidden_states.to(qformer_device, non_blocking=True)
+        
         # デバイス・データ型統一
         llama_device = encoder_hidden_states.device
         llama_dtype = encoder_hidden_states.dtype
-        qformer_device = next(self.qformer.parameters()).device
         qformer_dtype = next(self.qformer.parameters()).dtype
         
-        if llama_device != qformer_device or llama_dtype != qformer_dtype:
+        if llama_dtype != qformer_dtype:
             self.qformer = self.qformer.to(device=llama_device, dtype=llama_dtype)
             self.enhanced_sam_projector = self.enhanced_sam_projector.to(device=llama_device, dtype=llama_dtype)
         
@@ -1301,10 +1306,18 @@ class QFormerSegmentationBridge(nn.Module):
         # 3. 高精度リッチプロンプト生成（Web調査修正: 768次元）
         query_embeddings = qformer_outputs['query_embeds']  # (batch, 32, 768)
         
+        # 🔥 デバイス転送: Q-Former出力を後続処理デバイスに転送
+        # GPU負荷分散対応：layers 39-47がGPU 2にあるため、必要に応じて転送
+        target_device = next(self.enhanced_sam_projector.parameters()).device
+        if query_embeddings.device != target_device:
+            print(f"  🔄 Q-Former出力デバイス転送: {query_embeddings.device} → {target_device}")
+            query_embeddings = query_embeddings.to(target_device, non_blocking=True)
+        
         # Phase 2処理時のデバッグ
         print(f"  🔍 SAMプロンプト生成前のquery_embeddings確認:")
         print(f"    - shape: {query_embeddings.shape}")
         print(f"    - dtype: {query_embeddings.dtype}")
+        print(f"    - device: {query_embeddings.device}")
         print(f"    - 期待される形状: (batch, 32, 768)")
         
         # 🔍 デバッグ: dtype確認

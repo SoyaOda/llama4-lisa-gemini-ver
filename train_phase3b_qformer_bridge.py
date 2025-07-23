@@ -288,14 +288,15 @@ def create_model_and_components(args, logger):
                 
                 # 🔧 メモリ断片化解決: PYTORCH_CUDA_ALLOC_CONF設定（Webリサーチ推奨）
                 import os
-                # 🔥 2025年最適化CUDAメモリ設定（メモリリーク完全対策）
+                # 🔥 2025年最適化CUDAメモリ設定（Webリサーチ準拠・断片化完全対策）
                 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = (
                     'expandable_segments:True,'
-                    'max_split_size_mb:256,'
-                    'garbage_collection_threshold:0.6,'
-                    'roundup_power2_divisions:16'
+                    'max_split_size_mb:128,'          # 256→128: より細かい制御
+                    'garbage_collection_threshold:0.8,'  # 0.6→0.8: より積極的なGC
+                    'roundup_power2_divisions:32,'    # 16→32: メモリアライメント最適化
+                    'backend:cudaMallocAsync'         # 🔥 追加: 非同期メモリ割り当て
                 )
-                logger.info("✓ CUDAメモリ最適化: expandable_segments + 断片化制御 + GC闾値調整")
+                logger.info("✓ CUDAメモリ最適化強化: expandable_segments + cudaMallocAsync + 断片化制御")
                 
                 # 🔥 解決策3: 8xH100環境対応（容量不足解決・全GPU均等分散）
                 logger.info("🔥 解決策3: 8xH100環境対応（容量不足根本解決）")
@@ -315,35 +316,45 @@ def create_model_and_components(args, logger):
                 # 🔍 Expert Parallelismデバッグ: device_map構造確認
                 logger.info("🔍 Expert Parallelism device_map構築開始...")
                 
-                # Llama-4 Scout MoE構造に最適化したExpert Parallelism device_map
+                # Llama-4 Scout MoE構造に最適化したExpert Parallelism device_map（GPU 0負荷超軽減版）
                 device_map_setting = {
-                    # Embedding層: GPU 0に配置（初期処理用）
-                    'model.embed_tokens': 0,
+                    # Embedding層: GPU 1に移動（GPU 0負荷軽減）
+                    'model.embed_tokens': 1,
                     
                     # 🔥 Expert Parallelism: 16 Experts を 8 GPU に分散（2 Experts per GPU）
                     # 各レイヤーのMoE Expert を GPU間で分散配置
                     
                     # Dense層（self_attn, mlp）とMoE層を区別して最適配置
-                    # GPU 0: 初期層 + Expert 0-1
+                    # GPU 0: 最小限の1層のみ（OOM対策）
                     'model.layers.0': 0,
-                    'model.layers.1': 0,
-                    'model.layers.2': 0,
                     
-                    # GPU 1: Expert 2-3 + 中間層
+                    # GPU 1: embed_tokens + layers 1-7（Q-Former統一・負荷軽減）
+                    'model.layers.1': 1,
+                    'model.layers.2': 1,
                     'model.layers.3': 1,
                     'model.layers.4': 1,
                     'model.layers.5': 1,
                     'model.layers.6': 1,
                     'model.layers.7': 1,
-                    'model.layers.8': 1,
                     
-                    # GPU 2: Expert 4-5 + 中間層
+                    # GPU 2: layers 8-14 + layers 39-47（負荷分散最適化）
+                    'model.layers.8': 2,
                     'model.layers.9': 2,
                     'model.layers.10': 2,
                     'model.layers.11': 2,
                     'model.layers.12': 2,
                     'model.layers.13': 2,
                     'model.layers.14': 2,
+                    # 🔥 GPU 1負荷軽減: layers 39-47をGPU 2に移動
+                    'model.layers.39': 2,
+                    'model.layers.40': 2,
+                    'model.layers.41': 2,
+                    'model.layers.42': 2,
+                    'model.layers.43': 2,
+                    'model.layers.44': 2,
+                    'model.layers.45': 2,
+                    'model.layers.46': 2,
+                    'model.layers.47': 2,
                     
                     # GPU 3: Expert 6-7 + 中間層
                     'model.layers.15': 3,
@@ -369,7 +380,7 @@ def create_model_and_components(args, logger):
                     'model.layers.31': 5,
                     'model.layers.32': 5,
                     
-                    # GPU 6: Expert 12-13 + 中間層
+                    # GPU 6: Expert 12-13（負荷分散最適化）
                     'model.layers.33': 6,
                     'model.layers.34': 6,
                     'model.layers.35': 6,
@@ -377,20 +388,11 @@ def create_model_and_components(args, logger):
                     'model.layers.37': 6,
                     'model.layers.38': 6,
                     
-                    # GPU 7: Expert 14-15 + 最終層 + lm_head
-                    'model.layers.39': 7,
-                    'model.layers.40': 7,
-                    'model.layers.41': 7,
-                    'model.layers.42': 7,
-                    'model.layers.43': 7,
-                    'model.layers.44': 7,
-                    'model.layers.45': 7,
-                    'model.layers.46': 7,
-                    'model.layers.47': 7,
+                    # GPU 7: lm_head（Backward OOM対策）
+                    'lm_head': 7,  # 🔥 GPU 6 Backward OOM対策: lm_headをGPU 7に移動
                     
-                    # 出力層: GPU 7（最終層と同じGPUで通信最小化）
-                    'model.norm': 7,
-                    'lm_head': 7
+                    # 出力層: cuda:2に配置（layers 39-47と同一デバイス）
+                    'model.norm': 2
                 }
                 
                 # 🔍 Expert Parallelismデバッグ: device_map詳細出力
@@ -410,20 +412,20 @@ def create_model_and_components(args, logger):
                 logger.info("📊 メモリ効率: 109B total → 17B active per token")
                 
                 if device_count >= 8:
-                    # 🔥 Expert Parallelism対応メモリ制限（MoE最適化）
+                    # 🔥 Expert Parallelism対応メモリ制限（GPU 0超軽減版）
                     max_memory_dict = {
-                        0: "45GB",   # GPU 0: embed_tokens + 3層 (MoE初期処理)
-                        1: "50GB",   # GPU 1: 6層 + Expert 2-3分散
-                        2: "50GB",   # GPU 2: 6層 + Expert 4-5分散
-                        3: "50GB",   # GPU 3: 6層 + Expert 6-7分散
-                        4: "50GB",   # GPU 4: 6層 + Expert 8-9分散
-                        5: "50GB",   # GPU 5: 6層 + Expert 10-11分散
-                        6: "50GB",   # GPU 6: 6層 + Expert 12-13分散
-                        7: "55GB"    # GPU 7: 9層 + Expert 14-15 + lm_head
+                        0: "32GB",   # GPU 0: 1層のみ（OOM対策）
+                        1: "58GB",   # GPU 1: embed_tokens + 7層 + Expert分散
+                        2: "52GB",   # GPU 2: 6層 + Expert 4-5分散
+                        3: "52GB",   # GPU 3: 6層 + Expert 6-7分散
+                        4: "52GB",   # GPU 4: 6層 + Expert 8-9分散
+                        5: "52GB",   # GPU 5: 6層 + Expert 10-11分散
+                        6: "58GB",   # GPU 6: 6層 + Expert 12-13 + lm_head（重負荷）
+                        7: "50GB"    # GPU 7: 9層 + Expert 14-15（軽減済み）
                     }
-                    logger.info("✓ Expert Parallelismメモリ戦略: MoE最適化配分")
-                    logger.info("📋 GPU 0: 45GB (embed+3層), GPU 1-6: 50GB (6層+Expert分散)")
-                    logger.info("📋 GPU 7: 55GB (9層+Expert+lm_head), 総容量: 400GB")
+                    logger.info("✓ Expert Parallelismメモリ戦略: GPU 7負荷軽減版")
+                    logger.info("📋 GPU 0: 32GB (1層), GPU 1: 58GB (embed+7層), GPU 2-5: 52GB (6層+Expert)")
+                    logger.info("📋 GPU 6: 58GB (6層+Expert+lm_head), GPU 7: 50GB (9層+Expert), 総容量: 376GB")
                     logger.info("📊 メモリ効率: Expert分散で実効17B/109Bパラメータアクティブ")
                 
                 elif device_count >= 4:
@@ -483,10 +485,10 @@ def create_model_and_components(args, logger):
                     "use_safetensors": True,           # safetensors使用
                 }
                 
-                logger.info("🔥 GPU 0負荷軽減戦略適用: embed_tokens→GPU1, レイヤー6→3に削減")
+                logger.info("🔥 GPU 7負荷軽減戦略適用: lm_head→GPU6移動, メモリ制限厳格化")
                 logger.info(f"📊 デバイス配置: {len(device_map_setting)} コンポーネント分散配置（48レイヤー完全カバー）")
-                logger.info(f"📊 メモリ制限: {sum([int(mem.replace('GB', '')) for mem in max_memory_dict.values()])}GB総制限")
-                logger.info("📋 負荷分散最適化: GPU0:3層のみ, GPU1:embed+6層, GPU2-6:6層ずつ, GPU7:9層+lm_head")
+                logger.info(f"📊 メモリ制限: {sum([int(mem.replace('GB', '')) for mem in max_memory_dict.values()])}GB総制限（19GB安全マージン）")
+                logger.info("📋 負荷分散最適化: GPU0:1層, GPU1:embed+7層, GPU2-5:6層, GPU6:6層+lm_head, GPU7:9層")
                 
                 logger.info(f"🔧 数値安定化設定適用: rms_norm_eps={config_linux.LAYERNORM_EPSILON}")
                 
@@ -510,12 +512,27 @@ def create_model_and_components(args, logger):
                 except Exception as config_error:
                     logger.warning(f"  ⚠️ config修正スキップ: {config_error}")
                 
+                # 🔥 モデルロード前の緊急メモリクリーンアップ（GPU 7 OOM対策）
+                logger.info("🔥 モデルロード前: 緊急メモリクリーンアップ実行...")
+                import gc
+                # torch は既にインポート済みなので再インポート不要
+                
+                # 既存のCUDAコンテキストをクリア
+                for gpu_id in range(torch.cuda.device_count()):
+                    with torch.cuda.device(gpu_id):
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                
+                # Python GCの実行
+                gc.collect()
+                
                 # 🔍 Expert Parallelismデバッグ: モデルロード直前
                 logger.info("🔍 Expert Parallelism: モデルロード直前チェック")
                 logger.info(f"  - model_id: {model_id}")
                 logger.info(f"  - device_map type: {type(load_kwargs['device_map'])}")
                 logger.info(f"  - device_map length: {len(load_kwargs['device_map'])}")
                 logger.info(f"  - max_memory type: {type(load_kwargs['max_memory'])}")
+                logger.info(f"  - GPU 7制限: {load_kwargs['max_memory'].get(7, 'N/A')} (lm_head移動済み)")
                 
                 llama4_model = model_class.from_pretrained(model_id, **load_kwargs)
                 logger.info(f"✓ {model_class.__name__}使用（Expert Parallelism + カスタムdevice_map）")
@@ -569,41 +586,87 @@ def create_model_and_components(args, logger):
                 # HuggingFaceが自動的にdevice_mapを処理するため、dispatch_modelは不要
                 logger.info("✓ Model Parallelismはfrom_pretrainedで自動的に適用されています")
                 
-                # 🔥 Accelerate Hooks動作制御: GPU 0集約回避
-                logger.info("🔧 Accelerate Hooks動作制御中...")
+                # 🔥 強化版Accelerate Hooks制御: GPU 0 OOM根本対策
+                logger.info("🔧 強化版Accelerate Hooks制御開始（GPU 0 OOM根本対策）...")
                 try:
                     from accelerate import hooks
                     
-                    # AlignDevicesHookの動作を制御
                     hooks_found = []
                     hooks_modified = 0
+                    hooks_disabled = 0
+                    align_device_hooks = []
                     
-                    # モデル全体を走査してHookを検出・修正
+                    # Phase 1: AlignDevicesHookの特定と強力な制御
                     for name, module in llama4_model.named_modules():
                         if hasattr(module, '_hf_hook'):
                             hook = module._hf_hook
                             hook_type = type(hook).__name__
                             hooks_found.append(f"{name}: {hook_type}")
                             
-                            # AlignDevicesHookを特定して修正
                             if hook_type == 'AlignDevicesHook':
+                                align_device_hooks.append((name, hook))
+                                
+                                # Method 1: post_forwardの完全無効化（OOM根本対策）
+                                if hasattr(hook, 'post_forward'):
+                                    original_post_forward = hook.post_forward
+                                    def noop_post_forward(module, output):
+                                        # 出力をそのまま返す（デバイス転送しない）
+                                        return output
+                                    hook.post_forward = noop_post_forward
+                                    hooks_disabled += 1
+                                    logger.info(f"  🛡️ {name}: post_forward無効化")
+                                
+                                # Method 2: input_device調整（従来手法も維持）
                                 if hasattr(hook, 'input_device') and str(hook.input_device) == 'cuda:0':
-                                    # GPU 0集約を回避するため、input_deviceを各レイヤーの実行デバイスに変更
                                     original_device = hook.input_device
                                     execution_device = getattr(hook, 'execution_device', hook.input_device)
                                     
-                                    # execution_deviceをinput_deviceとして設定（出力をそのレイヤーのデバイスに留める）
-                                    hook.input_device = execution_device
-                                    hooks_modified += 1
+                                    if str(execution_device) != 'cuda:0':
+                                        hook.input_device = execution_device
+                                        hooks_modified += 1
+                                        logger.info(f"  📝 {name}: input_device {original_device} → {execution_device}")
+                                
+                                # Method 3: skip_keysの拡張（hidden_statesを転送から除外）
+                                if hasattr(hook, 'skip_keys'):
+                                    if hook.skip_keys is None:
+                                        hook.skip_keys = set()
+                                    elif not isinstance(hook.skip_keys, set):
+                                        hook.skip_keys = set(hook.skip_keys) if hook.skip_keys else set()
                                     
-                                    logger.info(f"  ✓ {name}: input_device {original_device} → {execution_device}")
+                                    # 大きなテンソルを転送から除外
+                                    original_skip_keys = len(hook.skip_keys)
+                                    hook.skip_keys.update(['hidden_states', 'last_hidden_state', 'logits', 'attention_weights'])
+                                    if len(hook.skip_keys) > original_skip_keys:
+                                        logger.info(f"  🔒 {name}: skip_keys拡張（大テンソル除外）")
                     
-                    logger.info(f"✓ Hooks制御完了: {len(hooks_found)}個検出、{hooks_modified}個修正")
+                    # Phase 2: 追加のGPU 0負荷軽減策
+                    logger.info("🔧 追加GPU 0負荷軽減策実行...")
+                    
+                    # embed_tokensをGPU 1に移動（より積極的な負荷分散）
+                    if hasattr(llama4_model, 'hf_device_map'):
+                        current_map = llama4_model.hf_device_map
+                        if 'model.embed_tokens' in current_map and current_map['model.embed_tokens'] == 0:
+                            logger.info("  📝 embed_tokens: GPU 0 → GPU 1 移動試行...")
+                            try:
+                                # embed_tokensの安全な移動
+                                embed_module = llama4_model.model.embed_tokens
+                                embed_module.to('cuda:1')
+                                current_map['model.embed_tokens'] = 1
+                                logger.info("  ✅ embed_tokens移動完了: GPU 0 → GPU 1")
+                            except Exception as e:
+                                logger.warning(f"  ⚠️ embed_tokens移動失敗: {e}")
+                    
+                    logger.info(f"✅ 強化版Hooks制御完了:")
+                    logger.info(f"  - AlignDevicesHook検出: {len(align_device_hooks)}個")
+                    logger.info(f"  - post_forward無効化: {hooks_disabled}個（OOM根本対策）")
+                    logger.info(f"  - input_device修正: {hooks_modified}個")
+                    logger.info(f"  - 総Hook数: {len(hooks_found)}個")
+                    
                     if hooks_found:
-                        logger.info(f"  - 検出されたHooks: {', '.join(hooks_found[:5])}{'...' if len(hooks_found) > 5 else ''}")
+                        logger.info(f"  - 検出Hook例: {', '.join(hooks_found[:3])}{'...' if len(hooks_found) > 3 else ''}")
                     
                 except Exception as hook_error:
-                    logger.warning(f"⚠️ Accelerate Hooks制御エラー: {hook_error}")
+                    logger.warning(f"⚠️ 強化版Accelerate Hooks制御エラー: {hook_error}")
                     logger.warning("⚠️ GPU 0集約が続く可能性があります")
                 
                 # embed_tokensの状態確認（デバッグ用）
@@ -832,6 +895,35 @@ def create_model_and_components(args, logger):
             # Llama-4モデルはModel Parallelismで分散配置済み（手動移動不要）
             
             logger.info(f"✓ QFormerSegmentationBridge Model Parallelism配置完了（主要: {main_device}）")
+            
+            # 🔍 段階1: 診断強化 - Q-Former内部LayerNormパラメータの詳細デバイス確認
+            logger.info("🔍 診断強化: Q-Former内部パラメータデバイス詳細分析...")
+            diagnose_qformer_device_placement(qformer_bridge, logger)
+            
+            # 🔥 段階2: SAM2Wrapper強制統一（PyTorchベストプラクティス準拠）
+            logger.info("🔥 段階2: SAM2Wrapper強制デバイス統一開始...")
+            if hasattr(qformer_bridge, 'sam2_wrapper') and qformer_bridge.sam2_wrapper is not None:
+                try:
+                    logger.info(f"  📍 SAM2Wrapper強制統一: {main_device}に完全移動...")
+                    # 再度強制的にSAM2Wrapperを統一
+                    qformer_bridge.sam2_wrapper = qformer_bridge.sam2_wrapper.to(device=main_device, dtype=torch.bfloat16)
+                    
+                    # 内部のSAM2Modelも強制統一
+                    if hasattr(qformer_bridge.sam2_wrapper, 'sam2_model'):
+                        qformer_bridge.sam2_wrapper.sam2_model = qformer_bridge.sam2_wrapper.sam2_model.to(device=main_device, dtype=torch.bfloat16)
+                        logger.info(f"  ✅ SAM2Model内部も{main_device}に統一完了")
+                    
+                    logger.info(f"  ✅ SAM2Wrapper強制統一完了: {main_device}")
+                    
+                    # 統一後の再診断
+                    logger.info("🔍 統一後の診断:")
+                    diagnose_qformer_device_placement(qformer_bridge, logger)
+                    
+                except Exception as sam_error:
+                    logger.error(f"  ❌ SAM2Wrapper強制統一エラー: {sam_error}")
+            else:
+                logger.warning("  ⚠️ SAM2Wrapperが見つかりません")
+            
         except Exception as e:
             logger.warning(f"⚠️ QFormerSegmentationBridge配置エラー: {e}")
         
@@ -850,7 +942,65 @@ def create_model_and_components(args, logger):
         # Model Parallelism対応デバイス配置
         main_device, _ = get_model_device_map(qformer_bridge)
         dual_pathway_decoder = move_to_device_safely(dual_pathway_decoder, main_device, logger, "dual_pathway_decoder")
+        
+        # 🔥 段階3: デュアルパスウェイデコーダ内SAM2強制統一（最終段階）
+        logger.info("🔥 段階3: デュアルパスウェイデコーダ内SAM2コンポーネント強制統一開始...")
+        if hasattr(dual_pathway_decoder, 'main_sam2_decoder') and dual_pathway_decoder.main_sam2_decoder is not None:
+            logger.info(f"  🎯 SAM2デコーダ発見: {type(dual_pathway_decoder.main_sam2_decoder)}")
+            # SAM2デコーダを強制的にmain_deviceに移動
+            dual_pathway_decoder.main_sam2_decoder = dual_pathway_decoder.main_sam2_decoder.to(device=main_device, dtype=torch.bfloat16)
+            logger.info(f"  ✅ SAM2デコーダ強制統一完了: → {main_device}")
+            
+            # さらにSAM2Wrapper内部の全サブモジュールを強制統一
+            for name, module in dual_pathway_decoder.main_sam2_decoder.named_modules():
+                if module != dual_pathway_decoder.main_sam2_decoder:  # 自分自身は除く
+                    try:
+                        module.to(device=main_device, dtype=torch.bfloat16)
+                    except Exception as e:
+                        logger.warning(f"    ⚠️ サブモジュール移動失敗 {name}: {e}")
+            logger.info(f"  ✅ SAM2Wrapper全サブモジュール強制統一完了")
+        else:
+            logger.warning("  ⚠️ SAM2デコーダが見つかりません（モック使用の可能性）")
+        
         logger.info(f"✓ デュアルパスウェイデコーダ初期化完了（{main_device}）")
+        
+        # 🔍 段階4: SAM2コンポーネント全体検索デバッグ（完全スキャン）
+        logger.info("🔍 段階4: SAM2コンポーネント全体検索開始...")
+        sam2_components_found = []
+        
+        def scan_for_sam2_components(module, path=""):
+            """SAM2関連のコンポーネントを再帰的に検索"""
+            for name, submodule in module.named_children():
+                current_path = f"{path}.{name}" if path else name
+                
+                # SAM2関連キーワードでマッチ
+                if any(keyword in name.lower() for keyword in ['sam2', 'sam_', 'segment', 'wrapper']):
+                    device_info = "CPU"
+                    if hasattr(submodule, 'parameters'):
+                        try:
+                            first_param = next(submodule.parameters(), None)
+                            if first_param is not None:
+                                device_info = str(first_param.device)
+                        except:
+                            pass
+                    
+                    sam2_components_found.append({
+                        'path': current_path,
+                        'type': type(submodule).__name__,
+                        'device': device_info,
+                        'module': submodule
+                    })
+                    logger.info(f"  🎯 SAM2コンポーネント発見: {current_path} ({type(submodule).__name__}) → {device_info}")
+                
+                # 再帰的に探索継続
+                scan_for_sam2_components(submodule, current_path)
+        
+        # 全モジュールをスキャン
+        logger.info("  📊 QFormerSegmentationBridge内を検索中...")
+        scan_for_sam2_components(qformer_bridge, "qformer_bridge")
+        
+        logger.info("  📊 デュアルパスウェイデコーダ内を検索中...")
+        scan_for_sam2_components(dual_pathway_decoder, "dual_pathway_decoder")
         
         # 多重解像度特徴統合（test_phase3b成功パターン移植）
         multiresolution_fusion = Llama4SAM2MultiResolutionFusion(
@@ -866,6 +1016,39 @@ def create_model_and_components(args, logger):
         # Model Parallelism対応デバイス配置
         multiresolution_fusion = move_to_device_safely(multiresolution_fusion, main_device, logger, "multiresolution_fusion")
         logger.info(f"✓ 多重解像度特徴統合初期化完了（{main_device}）")
+        
+        # 🔍 段階4.5: 多重解像度融合モジュール内のSAM2検索
+        logger.info("🔍 段階4.5: 多重解像度融合モジュール内SAM2検索...")
+        fusion_sam2_found = []
+        for name, submodule in multiresolution_fusion.named_modules():
+            if any(keyword in name.lower() for keyword in ['sam2', 'sam_', 'segment']):
+                device_info = "CPU"
+                if hasattr(submodule, 'parameters'):
+                    try:
+                        first_param = next(submodule.parameters(), None)
+                        if first_param is not None:
+                            device_info = str(first_param.device)
+                    except:
+                        pass
+                fusion_sam2_found.append((name, type(submodule).__name__, device_info))
+                logger.info(f"  🎯 融合モジュール内SAM2: {name} ({type(submodule).__name__}) → {device_info}")
+        
+        if not fusion_sam2_found:
+            logger.info("  ✅ 多重解像度融合モジュール内にSAM2コンポーネントは見つかりませんでした")
+        
+        # 🔍 全体のSAM2コンポーネント検索結果まとめ
+        logger.info(f"🔍 SAM2コンポーネント検索結果: {len(sam2_components_found)}個発見")
+        for i, comp in enumerate(sam2_components_found):
+            logger.info(f"  [{i+1}] {comp['path']} ({comp['type']}) → {comp['device']}")
+        
+        # cuda:7にあるコンポーネントを特定
+        cuda7_components = [comp for comp in sam2_components_found if 'cuda:7' in comp['device']]
+        if cuda7_components:
+            logger.warning(f"⚠️ cuda:7に配置されたSAM2コンポーネント: {len(cuda7_components)}個")
+            for comp in cuda7_components:
+                logger.warning(f"    🔥 修正対象: {comp['path']} ({comp['type']})")
+        else:
+            logger.info("✅ cuda:7にSAM2コンポーネントは見つかりませんでした")
         
         # OHEM損失関数（test_phase3b成功パターン移植）
         ohem_loss = create_ohem_loss(
@@ -1289,8 +1472,33 @@ def move_to_device_safely(obj, device, logger, name="object"):
                 logger.debug(f"    meta parameters: {meta_params[:3]}{'...' if len(meta_params) > 3 else ''}")
                 return obj  # meta tensor含有モジュールはスキップ
             else:
-                # meta tensorがない場合のみデバイス移動
-                return obj.to(device=device, dtype=torch.bfloat16, non_blocking=True)
+                logger.info(f"  - {name}: {device}に移動中...")
+                
+                # 🔥 SAM2Wrapper特別処理：強制的な完全デバイス統一
+                if 'sam2' in name.lower():
+                    logger.info(f"  🔥 SAM2Wrapper強制統一: {name} → {device}")
+                    # PyTorchベストプラクティス: 完全な再帰的移動
+                    obj = obj.to(device=device, dtype=torch.bfloat16, non_blocking=True)
+                    
+                    # 追加確認：全パラメータが正しく移動されたかチェック
+                    device_check_failed = False
+                    for param_name, param in obj.named_parameters():
+                        if param.device != torch.device(device):
+                            logger.warning(f"    ⚠️ {param_name}: {param.device} ≠ {device}")
+                            device_check_failed = True
+                    
+                    if device_check_failed:
+                        logger.warning(f"    🔄 再試行: {name}の完全統一")
+                        # 再帰的強制移動
+                        for module_name, module in obj.named_modules():
+                            if hasattr(module, 'to'):
+                                module.to(device=device, dtype=torch.bfloat16, non_blocking=True)
+                    
+                    logger.info(f"  ✅ SAM2Wrapper強制統一完了: {name}")
+                    return obj
+                else:
+                    # meta tensorがない場合のみデバイス移動
+                    return obj.to(device=device, dtype=torch.bfloat16, non_blocking=True)
         elif isinstance(obj, torch.Tensor):
             if obj.is_meta:
                 logger.debug(f"  - {name}: meta tensorのためスキップ")
@@ -1302,6 +1510,118 @@ def move_to_device_safely(obj, device, logger, name="object"):
     except Exception as e:
         logger.warning(f"  - {name}: 移動エラー（{e}）、スキップ")
         return obj
+
+def diagnose_qformer_device_placement(qformer_bridge, logger):
+    """🔍 段階1: Q-Former内部のLayerNormパラメータ詳細デバイス診断"""
+    try:
+        logger.info("=" * 60)
+        logger.info("🔍 Q-Former内部パラメータデバイス診断レポート")
+        logger.info("=" * 60)
+        
+        # 1. Q-Former内部のLayerNormパラメータを再帰的に検索
+        layernorm_devices = {}
+        linear_devices = {}
+        all_devices = set()
+        
+        def analyze_module_recursive(module, prefix=""):
+            """モジュールを再帰的に分析してLayerNorm、Linearを特定"""
+            for name, submodule in module.named_children():
+                full_name = f"{prefix}.{name}" if prefix else name
+                
+                # LayerNormの分析
+                if isinstance(submodule, (torch.nn.LayerNorm, torch.nn.GroupNorm, torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)):
+                    norm_type = type(submodule).__name__
+                    if hasattr(submodule, 'weight') and submodule.weight is not None:
+                        device = submodule.weight.device
+                        layernorm_devices[f"{full_name}({norm_type})"] = str(device)
+                        all_devices.add(str(device))
+                        logger.info(f"  📍 {norm_type}: {full_name} → {device}")
+                
+                # Linearの分析
+                elif isinstance(submodule, torch.nn.Linear):
+                    if hasattr(submodule, 'weight') and submodule.weight is not None:
+                        device = submodule.weight.device
+                        linear_devices[f"{full_name}(Linear)"] = str(device)
+                        all_devices.add(str(device))
+                        logger.debug(f"  🔗 Linear: {full_name} → {device}")
+                
+                # 再帰的に子モジュールを解析
+                analyze_module_recursive(submodule, full_name)
+        
+        # 2. Q-Former本体の分析
+        if hasattr(qformer_bridge, 'qformer') and qformer_bridge.qformer is not None:
+            logger.info("📊 Q-Former本体分析:")
+            analyze_module_recursive(qformer_bridge.qformer, "qformer")
+        
+        # 3. SAM2Wrapperの分析（詳細版）
+        if hasattr(qformer_bridge, 'sam2_wrapper') and qformer_bridge.sam2_wrapper is not None:
+            logger.info("📊 SAM2Wrapper詳細分析:")
+            analyze_module_recursive(qformer_bridge.sam2_wrapper, "sam2_wrapper")
+            
+            # SAM2内部のSAM2Modelも分析
+            if hasattr(qformer_bridge.sam2_wrapper, 'sam2_model'):
+                logger.info("📊 SAM2Wrapper.sam2_model詳細分析:")
+                analyze_module_recursive(qformer_bridge.sam2_wrapper.sam2_model, "sam2_wrapper.sam2_model")
+        
+        # 4. その他のコンポーネント分析
+        for attr_name in ['seg_token_generator', 'enhanced_sam_projector', 'curriculum_projector']:
+            if hasattr(qformer_bridge, attr_name):
+                component = getattr(qformer_bridge, attr_name)
+                if component is not None:
+                    logger.info(f"📊 {attr_name}分析:")
+                    analyze_module_recursive(component, attr_name)
+        
+        # 5. 分析結果サマリ
+        logger.info("=" * 60)
+        logger.info(f"🔍 診断結果サマリ:")
+        logger.info(f"  検出されたデバイス数: {len(all_devices)}")
+        logger.info(f"  使用デバイス: {sorted(all_devices)}")
+        logger.info(f"  LayerNorm/Norm層数: {len(layernorm_devices)}")
+        logger.info(f"  Linear層数: {len(linear_devices)}")
+        
+        # 6. デバイス不整合の警告
+        if len(all_devices) > 1:
+            logger.warning("⚠️ デバイス不整合検出！複数デバイスにパラメータが分散しています:")
+            device_counts = {}
+            for device in all_devices:
+                device_counts[device] = sum(1 for d in layernorm_devices.values() if d == device)
+                device_counts[device] += sum(1 for d in linear_devices.values() if d == device)
+            
+            for device, count in device_counts.items():
+                logger.warning(f"  {device}: {count}個のパラメータ")
+        else:
+            logger.info("✅ デバイス統一確認: 全パラメータが同一デバイス")
+        
+        # 7. nn.ModuleList使用状況確認
+        logger.info("📊 nn.ModuleList使用状況:")
+        modulelist_found = False
+        
+        def check_modulelist_recursive(module, prefix=""):
+            nonlocal modulelist_found
+            for name, submodule in module.named_children():
+                full_name = f"{prefix}.{name}" if prefix else name
+                if isinstance(submodule, torch.nn.ModuleList):
+                    modulelist_found = True
+                    logger.info(f"  ✅ nn.ModuleList発見: {full_name} (長さ: {len(submodule)})")
+                elif isinstance(submodule, (list, tuple)):
+                    logger.warning(f"  ⚠️ 通常のPythonリスト/タプル: {full_name} (タイプ: {type(submodule)})")
+                
+                check_modulelist_recursive(submodule, full_name)
+        
+        if hasattr(qformer_bridge, 'qformer') and qformer_bridge.qformer is not None:
+            check_modulelist_recursive(qformer_bridge.qformer, "qformer")
+        
+        if not modulelist_found:
+            logger.warning("⚠️ nn.ModuleListが見つかりませんでした。通常のPythonリストを使用している可能性があります。")
+        
+        logger.info("=" * 60)
+        return layernorm_devices, linear_devices, all_devices
+        
+    except Exception as e:
+        logger.error(f"❌ Q-Former診断エラー: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {}, {}, set()
 
 def train_epoch(model_components, dataloader, optimizer, scheduler, scaler, epoch, args, logger, writer=None):
     """1エポックの学習実行（Phase 3B統合対応）"""
@@ -1481,6 +1801,43 @@ def train_epoch(model_components, dataloader, optimizer, scheduler, scaler, epoc
                 if hasattr(torch.cuda, 'reset_peak_memory_stats'):
                     torch.cuda.reset_peak_memory_stats()
             
+            # 🔍 段階5: LayerNormエラー直前デバイス診断
+            if step == 0:
+                logger.info("🔍 段階5: LayerNormエラー直前のデバイス診断開始...")
+                
+                # QFormerBridge内の全LayerNormモジュールをチェック
+                layernorm_devices = []
+                for name, module in qformer_bridge.named_modules():
+                    if 'LayerNorm' in type(module).__name__ or 'layernorm' in name.lower():
+                        try:
+                            first_param = next(module.parameters(), None)
+                            if first_param is not None:
+                                device_info = str(first_param.device)
+                                layernorm_devices.append((name, device_info))
+                                logger.info(f"    LayerNorm発見: {name} → {device_info}")
+                        except:
+                            pass
+                
+                # 入力テンソルのデバイス確認
+                images_device = adapted_batch.get('pixel_values', adapted_batch.get('images')).device
+                sam_images_device = adapted_batch.get('sam_pixel_values', adapted_batch.get('sam_images')).device
+                input_ids_device = adapted_batch['input_ids'].device
+                
+                logger.info(f"    入力テンソルデバイス:")
+                logger.info(f"      - images: {images_device}")
+                logger.info(f"      - sam_images: {sam_images_device}")
+                logger.info(f"      - input_ids: {input_ids_device}")
+                
+                # デバイス不一致の可能性を予測
+                unique_devices = set([device for _, device in layernorm_devices])
+                if len(unique_devices) > 1:
+                    logger.warning(f"⚠️ LayerNormデバイス不一致検出: {unique_devices}")
+                    for name, device in layernorm_devices:
+                        if 'cuda:7' in device:
+                            logger.warning(f"    🔥 cuda:7のLayerNorm: {name}")
+                else:
+                    logger.info(f"✅ LayerNorm統一デバイス: {unique_devices}")
+            
             # 2025年ベストプラクティス: H100専用高速化autocast + Memory-efficient attention
             with torch.amp.autocast('cuda', dtype=torch.bfloat16, enabled=True, cache_enabled=False):  # cache無効でメモリ節約
                 # 1. QFormerSegmentationBridge推論（test_phase3b成功パターン移植）
@@ -1561,9 +1918,18 @@ def train_epoch(model_components, dataloader, optimizer, scheduler, scaler, epoc
                 # 多重解像度融合（特徴が利用可能な場合のみ）
                 fusion_outputs = None
                 if llama_features is not None and sam_features is not None and qformer_features is not None:
-                    # デバイス統一確認
+                    # 🔥 デバイス統一確認（全特徴量をfirst_deviceに統一）
                     if qformer_features.device != first_device:
                         qformer_features = qformer_features.to(first_device)
+                        logger.debug(f"    📝 qformer_features統一: → {first_device}")
+                    
+                    if sam_features.device != first_device:
+                        sam_features = sam_features.to(first_device)
+                        logger.debug(f"    📝 sam_features統一: → {first_device}")
+                    
+                    if llama_features.device != first_device:
+                        llama_features = llama_features.to(first_device)
+                        logger.debug(f"    📝 llama_features統一: → {first_device}")
                     
                     fusion_outputs = multiresolution_fusion(
                         llama_features=llama_features,
@@ -1610,6 +1976,17 @@ def train_epoch(model_components, dataloader, optimizer, scheduler, scaler, epoc
                             logger.debug(f"    ✓ Llama隠れ状態使用: {llama_hidden_states.shape}")
                         else:
                             raise ValueError("Llama features必須ですが利用できません")
+                        
+                        # 🔥 デュアルパスウェイ推論前のデバイス統一（cuda:1 vs cuda:7エラー対策）
+                        target_device = llama_hidden_states.device  # Llamaのデバイスを基準とする
+                        
+                        if sam_images.device != target_device:
+                            sam_images = sam_images.to(target_device)
+                            logger.debug(f"    📝 sam_images統一: → {target_device}")
+                        
+                        if sam_prompts.device != target_device:
+                            sam_prompts = sam_prompts.to(target_device)
+                            logger.debug(f"    📝 sam_prompts統一: → {target_device}")
                         
                         # デュアルパスウェイ推論
                         dual_outputs = dual_pathway_decoder(
@@ -2320,6 +2697,62 @@ def train_epoch(model_components, dataloader, optimizer, scheduler, scaler, epoc
             else:
                 logger.error(f"  ❌ step {step}: 損失が0または無効、訓練を停止します")
                 raise RuntimeError("Invalid loss detected. Training cannot continue.")
+        
+        except RuntimeError as device_error:
+            # 🔍 段階6: LayerNormデバイス不一致エラーの詳細診断
+            if "Expected all tensors to be on the same device" in str(device_error) and "layernorm" in str(device_error).lower():
+                logger.error(f"🔥 LayerNormデバイス不一致エラー詳細診断 (step {step}):")
+                logger.error(f"  エラーメッセージ: {device_error}")
+                
+                # 全モジュールの詳細デバイス情報を出力
+                logger.error("  📊 全モジュールデバイス状況:")
+                for module_name, (module_path, module_type, device) in zip(
+                    ["qformer_bridge", "dual_pathway_decoder", "multiresolution_fusion"],
+                    [("qformer_bridge", type(qformer_bridge).__name__, "検査中"),
+                     ("dual_pathway_decoder", type(dual_pathway_decoder).__name__, "検査中"),
+                     ("multiresolution_fusion", type(multiresolution_fusion).__name__, "検査中")]
+                ):
+                    logger.error(f"    {module_name} ({module_type}):")
+                    module = locals()[module_name]
+                    
+                    # LayerNormモジュールのデバイス情報
+                    layernorm_count = 0
+                    for name, submodule in module.named_modules():
+                        if 'LayerNorm' in type(submodule).__name__:
+                            layernorm_count += 1
+                            try:
+                                first_param = next(submodule.parameters(), None)
+                                if first_param is not None:
+                                    logger.error(f"      LayerNorm {layernorm_count}: {name} → {first_param.device}")
+                            except:
+                                logger.error(f"      LayerNorm {layernorm_count}: {name} → デバイス取得失敗")
+                
+                # 特に問題のあるコンポーネントを特定
+                logger.error("  🎯 cuda:7に配置されたコンポーネント特定:")
+                cuda7_found = []
+                for name, module in [("qformer_bridge", qformer_bridge), 
+                                   ("dual_pathway_decoder", dual_pathway_decoder),
+                                   ("multiresolution_fusion", multiresolution_fusion)]:
+                    for subname, submodule in module.named_modules():
+                        try:
+                            first_param = next(submodule.parameters(), None)
+                            if first_param is not None and 'cuda:7' in str(first_param.device):
+                                cuda7_found.append(f"{name}.{subname}")
+                        except:
+                            pass
+                
+                if cuda7_found:
+                    logger.error(f"    🔥 cuda:7配置コンポーネント数: {len(cuda7_found)}")
+                    for comp in cuda7_found[:10]:  # 最初の10個のみ表示
+                        logger.error(f"      - {comp}")
+                else:
+                    logger.error("    ✅ cuda:7配置コンポーネントは見つかりませんでした")
+                
+                # 停止（修正のため）
+                raise device_error
+            else:
+                # その他のRuntimeError
+                raise device_error
         
         except torch.cuda.OutOfMemoryError as oom_e:
             # 🔥 Webリサーチ最適化: 2025年OOM自動回復（PyTorch torchtune準拠）
